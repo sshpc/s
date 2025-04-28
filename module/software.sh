@@ -213,7 +213,7 @@ softwarefun() {
     }
 
     menuname='首页/软件'
-    echo "software" >$installdir/config/lastfun
+    echo "softwarefun" >$installdir/config/lastfun
     options=("aptupdate软件更新" aptupdatefun "修复更新" configureaptfun "换软件源" changemirrors "snap管理" snapfun "软件卸载" removefun "安装常用包" installcomso 安装docker dockerinstall "安装snap版docker" dockersnapinstall "安装btop" installbtop "安装八合一" installbaheyi "安装xui" installxui "安装openvpn" installopenvpn "安装aapanel" installaapanel "安装RustDesk-Server" installrustdeskserver)
     menu "${options[@]}"
 

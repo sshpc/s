@@ -34,6 +34,7 @@ removeself() {
     rm -rf $installdir/core/*
     rm -rf $installdir/config/*
     rm -rf $installdir/module/*
+    rm -rf $installdir/version
     #rm -rf /bin/s
 
     read -ep "是否删除配置&日志 (默认n): " yorn
@@ -53,6 +54,8 @@ updateself() {
     if [ $? -eq 0 ]; then
         _blue '卸载旧版...'
         removeself
+        #写入日志
+        slog set install "$datevar  | 脚本升级"
         chmod +x "$installdir/s.sh"
         s
 

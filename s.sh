@@ -85,23 +85,23 @@ fi
 selfversion=$(cat $installdir/version)
 
 #加载内核
-filecheck /core/common.sh
-filecheck /core/menu.sh
+filecheck core/common.sh
+filecheck core/menu.sh
 
 #载入模块
-filecheck /module/status.sh
-filecheck /module/software.sh
-filecheck /module/network.sh
-filecheck /module/system.sh
-filecheck /module/docker.sh
-filecheck /module/ordertools.sh
+filecheck module/status.sh
+filecheck module/software.sh
+filecheck module/network.sh
+filecheck module/system.sh
+filecheck module/docker.sh
+filecheck module/ordertools.sh
 
 #主函数
 main() {
 
     menuname='首页'
     #echo "main" >$installdir/config/lastfun
-    options=("状态" statusfun "soft软件管理" softwarefun "network网络管理" networkfun "system系统管理" systemfun "docker" dockerfun "其他工具" ordertoolsfun "升级脚本" updateself "卸载脚本" removeself)
+    options=("状态" statusfun "软件管理" softwarefun "网络管理" networkfun "system系统管理" systemfun "docker" dockerfun "其他工具" ordertoolsfun "升级脚本" updateself "卸载脚本" removeself)
     menu "${options[@]}"
 }
 

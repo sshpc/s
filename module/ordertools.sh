@@ -133,13 +133,13 @@ EOF
             ps uxa | grep .vscode-server | awk '{print $2}' | xargs kill -9
         }
         menuname='首页/其他工具/杀死vscode进程'
-        echo "ordertools" >$installdir/config/lastfun
+        echo "ordertoolsfun" >$installdir/config/lastfun
         options=("仅杀掉占用最大的进程" killtopvscode "杀死所有vscode进程" killallvscode)
         menu "${options[@]}"
     }
 
     menuname='首页/其他工具'
-    echo "ordertools" >$installdir/config/lastfun
+    echo "ordertoolsfun" >$installdir/config/lastfun
     options=("统计根目录占用" statisticsusage "多线程下载" aria2fun "统计目录文件行数" countfileslines "安装git便捷提交" igitcommiteasy "杀死vscode进程" killvscode "Siege-web压力测试" siegetest "hping3-DDOS" hping3fun "打满自身内存" Fillupownmemory "综合功能脚本" IntegratedFunctionScript)
     menu "${options[@]}"
 }
