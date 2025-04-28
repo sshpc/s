@@ -101,7 +101,7 @@ main() {
 
     menuname='首页'
     #echo "main" >$installdir/config/lastfun
-    options=("状态" statusfun "soft软件管理" softwarefun "network网络管理" networkfun "system系统管理" systemfun "docker" dockerfun "其他工具" ordertoolsfun "查看脚本执行日志" catselfrunlog "升级脚本" updateself "卸载脚本" removeself)
+    options=("状态" statusfun "soft软件管理" softwarefun "network网络管理" networkfun "system系统管理" systemfun "docker" dockerfun "其他工具" ordertoolsfun "升级脚本" updateself "卸载脚本" removeself)
     menu "${options[@]}"
 }
 
