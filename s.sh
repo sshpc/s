@@ -54,44 +54,49 @@ jumpfun() {
     echo
 }
 
+# 加载动画
+loading() {
+    local pids=("$@")
+    local delay=0.1
+    local spinstr='|/-\'
+    tput civis # 隐藏光标
+
+    while :; do
+        local all_done=true
+        for pid in "${pids[@]}"; do
+            if kill -0 "$pid" 2>/dev/null; then
+                all_done=false
+                local temp=${spinstr#?}
+                printf "\r\033[0;31;36m[ %c ] 正在安装 ...\033[0m" "$spinstr"
+                local spinstr=$temp${spinstr%"$temp"}
+                sleep $delay
+            fi
+        done
+        [[ $all_done == true ]] && break
+    done
+
+    tput cnorm        # 恢复光标
+    printf "\r\033[K" # 清除行
+}
+
 # 检查文件是否存在
 filecheck() {
-    if [ ! -f "$installdir/$1" ]; then
-
-        # 下载链接列表#兼容国内环境
-        local links=(
-            "https://gh.ddlc.top/"
-            "https://git.886.be/"
-            "https://github.com/"
-        )
-
-        # 设置超时时间（秒）
-       local timeout=5
-
-        # 优化下载逻辑，添加重试机制
-        local max_retries=3
-        for link in "${links[@]}"; do
-            local retries=0
-            while [ $retries -lt $max_retries ]; do
-                echo "正在尝试下载：$link (重试 $((retries + 1)) 次)"
-                wget --timeout="$timeout" "$(link)http://raw.githubusercontent.com/sshpc/s/main/$1" -O "$installdir/$1"
-                if [ $? -eq 0 ]; then
-                    
-                    break 2
-                fi
-                retries=$((retries + 1))
-                sleep 2
-            done
-            _yellow "下载失败，继续尝试下一个镜像地址"
-        done
-        # 优化错误处理，添加更多详细信息
-        if [ ! -f "$installdir/$1" ]; then
-            _red "尝试全部镜像地址下载失败，请检查网络连接或镜像地址：${links[@]}"
-            exit 1
-        fi
-
+    if [[ -f "$installdir/$1" && -s "$installdir/$1" ]]; then
+        return
     fi
-    source "$installdir/$1"
+
+    # 下载链接列表#兼容国内环境
+
+    #"https://github.com/"
+    #"https://gh.ddlc.top/"
+    #"https://git.886.be/"
+
+    local proxylinks="https://github.com/"
+
+    # 设置超时时间（秒）
+    local timeout=5
+
+    wget -q --timeout="$timeout" "${proxylink}http://raw.githubusercontent.com/sshpc/s/main/$1" -O "$installdir/$1" >/dev/null 2>&1 &
 
 }
 
@@ -112,17 +117,29 @@ fi
 #加载版本
 selfversion=$(cat $installdir/version)
 
-#加载内核
-filecheck core/common.sh
-filecheck core/menu.sh
+#加载文件
 
-#载入模块
-filecheck module/status.sh
-filecheck module/software.sh
-filecheck module/network.sh
-filecheck module/system.sh
-filecheck module/docker.sh
-filecheck module/ordertools.sh
+shfiles=(
+    'core/common.sh'
+    'core/menu.sh'
+    'module/status.sh'
+    'module/software.sh'
+    'module/network.sh'
+    'module/system.sh'
+    'module/docker.sh'
+    'module/ordertools.sh'
+)
+pids=()
+for shfile in "${shfiles[@]}"; do
+    filecheck $shfile
+    pids+=($!) # 收集子进程 PID
+done
+loading "${pids[@]}" # 显示加载动画
+wait                 # 等待所有子进程完成
+
+for shfile in "${shfiles[@]}"; do
+    source "$installdir/$shfile"
+done
 
 #主函数
 main() {

@@ -54,7 +54,7 @@ menu() {
         fi
     elif [[ $number == 'q' ]]; then
         echo
-        exit
+        kill -15 $$
     else
         echo
         _red '输入有误  回车返回首页'

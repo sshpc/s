@@ -71,7 +71,7 @@ _exit() {
     if [ -e "./speedtest-cli/speedtest" ]; then
         rm -rf ./speedtest-cli
     fi
-    _red "\n exit. again run 's'\n"
+    #_red "\n exit. again run 's'\n"
     exit 1
 }
 
