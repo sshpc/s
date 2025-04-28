@@ -1,5 +1,9 @@
 softwarefun() {
 
+    runthirdpartyfun() {
+        bash <(curl -sSL $1)
+    }
+
     #更新所有已安装的软件包
     aptupdatefun() {
         _blue "更新所有软件包"
@@ -69,13 +73,13 @@ softwarefun() {
     }
     #安装xray八合一
     installbaheyi() {
-        wget -P /root -N --no-check-certificate "https://raw.githubusercontent.com/mack-a/v2ray-agent/master/install.sh" && chmod 700 /root/install.sh && /root/install.sh
+        runthirdpartyfun https://raw.githubusercontent.com/mack-a/v2ray-agent/master/install.sh
         vasma
     }
 
     #安装xui
     installxui() {
-        bash <(curl -Ls https://raw.githubusercontent.com/vaxilu/x-ui/master/install.sh)
+        runthirdpartyfun https://raw.githubusercontent.com/vaxilu/x-ui/master/install.sh
     }
     #安装openvpn
     installopenvpn() {
@@ -177,7 +181,7 @@ softwarefun() {
     }
 
     installrustdeskserver() {
-        wget -N http://raw.githubusercontent.com/sshpc/rustdesktool/main/rustdesktool.sh && chmod +x ./rustdesktool.sh && ./rustdesktool.sh
+        runthirdpartyfun http://raw.githubusercontent.com/sshpc/rustdesktool/main/rustdesktool.sh
     }
 
     snapfun() {
@@ -208,7 +212,7 @@ softwarefun() {
     }
 
     dockerinstall() {
-        bash <(curl -sSL https://gitee.com/SuperManito/LinuxMirrors/raw/main/DockerInstallation.sh)
+        runthirdpartyfun https://gitee.com/SuperManito/LinuxMirrors/raw/main/DockerInstallation.sh
         apt install docker-compose -y
     }
 

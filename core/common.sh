@@ -56,6 +56,7 @@ updateself() {
         removeself
         #写入日志
         slog set install "$datevar  | 脚本升级"
+        wget -N http://raw.githubusercontent.com/sshpc/s/main/version -O "$installdir/version"
         chmod +x "$installdir/s.sh"
         s
 

@@ -57,14 +57,42 @@ jumpfun() {
 # 检查文件是否存在
 filecheck() {
     if [ ! -f "$installdir/$1" ]; then
-        wget -N http://raw.githubusercontent.com/sshpc/s/main/$1 -O "$installdir/$1"
+
+        # 下载链接列表#兼容国内环境
+        local links=(
+            "https://gh.ddlc.top/"
+            "https://git.886.be/"
+            "https://github.com/"
+        )
+
+        # 设置超时时间（秒）
+       local timeout=5
+
+        # 优化下载逻辑，添加重试机制
+        local max_retries=3
+        for link in "${links[@]}"; do
+            local retries=0
+            while [ $retries -lt $max_retries ]; do
+                echo "正在尝试下载：$link (重试 $((retries + 1)) 次)"
+                wget --timeout="$timeout" "$(link)http://raw.githubusercontent.com/sshpc/s/main/$1" -O "$installdir/$1"
+                if [ $? -eq 0 ]; then
+                    
+                    break 2
+                fi
+                retries=$((retries + 1))
+                sleep 2
+            done
+            _yellow "下载失败，继续尝试下一个镜像地址"
+        done
+        # 优化错误处理，添加更多详细信息
+        if [ ! -f "$installdir/$1" ]; then
+            _red "尝试全部镜像地址下载失败，请检查网络连接或镜像地址：${links[@]}"
+            exit 1
+        fi
+
     fi
-    # 检查上一条命令的退出状态码
-    if [ $? -eq 0 ]; then
-        source "$installdir/$1"
-    else
-        echo "下载文件失败,请重试"
-    fi
+    source "$installdir/$1"
+
 }
 
 # 检查目录是否存在(全新安装)
@@ -107,7 +135,7 @@ main() {
 
 #判断配置文件是否存在或是否是真实函数
 
-if [ -z "$(cat $installdir/config/lastfun)" || ! _exists "$(cat $installdir/config/lastfun)" ]; then
+if [ -z "$(cat $installdir/config/lastfun)" ]; then
     main
 else
     $(cat $installdir/config/lastfun)
