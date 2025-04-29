@@ -44,6 +44,7 @@ removeself() {
     
     _blue '卸载完成'
     echo
+    kill -15 $$
 }
 #脚本升级
 updateself() {

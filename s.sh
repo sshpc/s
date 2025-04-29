@@ -30,19 +30,61 @@ _blue() {
 
 #logo
 slogo() {
-    echo
-    _green '   ________       '
-    _green '  |\   ____\      '
-    _green '  \ \  \___|_     '
-    _green '   \ \_____  \    '
-    _green '    \|____|\  \   '
-    _green '      ____\_\  \  '
-    _green '     |\_________\ '
-    _green '     \|_________| '
-    echo
+
+    # 隐藏光标
+    tput civis
+
+    # 定义要打印的内容
+    local texts=(
+        "   ________       "
+        "  |\   ____\      "
+        "  \ \  \___|_     "
+        "   \ \_____  \    "
+        "    \|____|\  \   "
+        "      ____\_\  \  "
+        "     |\_________\ "
+        "     \|_________| "
+    )
+
+    # 获取最长行的长度
+    local max_length=0
+    for line in "${texts[@]}"; do
+        len=${#line}
+        if ((len > max_length)); then
+            max_length=$len
+        fi
+    done
+
+    # 初始化输出数组
+    local output=()
+    for ((i = 0; i < ${#texts[@]}; i++)); do
+        output[$i]=""
+    done
+
+    # 逐列打印
+    for ((col = 0; col < max_length; col++)); do
+        for ((i = 0; i < ${#texts[@]}; i++)); do
+            line=${texts[$i]}
+            char="${line:$col:1}"
+            if [[ -n $char ]]; then
+                output[$i]+=$char
+            else
+                output[$i]+=" "
+            fi
+        done
+        # 清屏
+        tput clear
+        for line in "${output[@]}"; do
+            _green "$line"
+        done
+        sleep 0.05
+    done
+
+    # 恢复光标
+    tput cnorm
 }
 
-#字符跳动 (参数：字符串 间隔时间s，默认为0.1秒)
+#逐字打印
 jumpfun() {
     my_string=$1
     delay=${2:-0.1}
@@ -67,7 +109,7 @@ loading() {
             if kill -0 "$pid" 2>/dev/null; then
                 all_done=false
                 local temp=${spinstr#?}
-                printf "\r\033[0;31;36m[ %c ] 正在安装 ...\033[0m" "$spinstr"
+                printf "\r\033[0;31;36m[ %c ] 安装组件 ...\033[0m" "$spinstr"
                 local spinstr=$temp${spinstr%"$temp"}
                 sleep $delay
             fi
@@ -81,29 +123,46 @@ loading() {
 
 # 检查文件是否存在
 filecheck() {
-    if [[ -f "$installdir/$1" && -s "$installdir/$1" ]]; then
-        return
+    local filename="$1"
+
+    if [[ -f "$installdir/$filename" && -s "$installdir/$filename" ]]; then
+        return 0
     fi
 
-    # 下载链接列表#兼容国内环境
+    (
 
-    #"https://github.com/"
-    #"https://gh.ddlc.top/"
-    #"https://git.886.be/"
+        # 下载链接列表，按顺序依次尝试 默认github
+        local proxylinks=(
+            "http://raw.githubusercontent.com"
+            "https://gh.ddlc.top/http://raw.githubusercontent.com"
+            "https://git.886.be/http://raw.githubusercontent.com"
+        )
 
-    local proxylinks="https://github.com/"
+        # 设置超时时间（秒）
+        local timeout=4
 
-    # 设置超时时间（秒）
-    local timeout=5
+        for proxylink in "${proxylinks[@]}"; do
 
-    wget -q --timeout="$timeout" "${proxylink}http://raw.githubusercontent.com/sshpc/s/main/$1" -O "$installdir/$1" >/dev/null 2>&1 &
+            wget -q --timeout="$timeout" "${proxylink}/sshpc/s/main/$1" -O "$installdir/$1" >/dev/null 2>&1
 
+            if [[ -f "$installdir/$filename" && -s "$installdir/$filename" ]]; then
+                exit 0
+            else
+                rm -f "$installdir/$filename"
+            fi
+        done
+
+        _red "文件 $filename 下载失败！"
+        exit 1
+    ) &
 }
 
 # 检查目录是否存在(全新安装)
 if [ ! -d "$installdir" ]; then
     slogo
-    jumpfun "welcome to use" 0.06
+    echo
+    jumpfun "welcome" 0.04
+    echo
 
     mkdir -p "$installdir" "$installdir/core" "$installdir/log" "$installdir/config" "$installdir/module"
 
@@ -145,7 +204,6 @@ done
 main() {
 
     menuname='首页'
-    #echo "main" >$installdir/config/lastfun
     options=("状态" statusfun "软件管理" softwarefun "网络管理" networkfun "system系统管理" systemfun "docker" dockerfun "其他工具" ordertoolsfun "升级脚本" updateself "卸载脚本" removeself)
     menu "${options[@]}"
 }
