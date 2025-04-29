@@ -35,11 +35,11 @@ removeself() {
     rm -rf $installdir/config/*
     rm -rf $installdir/module/*
     rm -rf $installdir/version
-    #rm -rf /bin/s
 
     read -ep "是否删除配置&日志 (默认n): " yorn
     if [[ "$yorn" = "y" ]]; then
         rm -rf $installdir
+        rm -rf /bin/s
     fi
     
     _blue '卸载完成'

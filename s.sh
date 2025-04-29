@@ -97,7 +97,7 @@ jumpfun() {
 }
 
 # 加载动画
-loading() {
+loadingbak() {
     local pids=("$@")
     local delay=0.1
     local spinstr='|/-\'
@@ -121,6 +121,80 @@ loading() {
     printf "\r\033[K" # 清除行
 }
 
+# 进度条 loading
+loading1() {
+    local pids=("$@")
+    local total=${#pids[@]}
+    local completed=0
+
+    tput civis # 隐藏光标
+
+    while :; do
+        completed=0
+        for pid in "${pids[@]}"; do
+            if ! kill -0 "$pid" 2>/dev/null; then
+                ((completed++))
+            fi
+        done
+
+        local percent=$((completed * 100 / total))
+        local bar_length=$((percent / 2)) # 总长50个字符
+        local bar=$(printf '%-*s' "$bar_length" '' | tr ' ' '=')
+        local empty=$(printf '%-*s' "$((50-bar_length))" '' | tr ' ' '.')
+
+        printf "\r\033[0;31;36m[%-50s] %3d%% (%d/%d)\033[0m" "$bar$empty" "$percent" "$completed" "$total"
+
+        if [[ $completed -eq $total ]]; then
+            break
+        fi
+
+        sleep 0.2
+    done
+
+    tput cnorm # 恢复光标
+    printf "\n"
+}
+loading() {
+    local pids=("$@")
+    local total=${#pids[@]}
+    local completed=0
+    local delay=0.02
+    local spinstr='|/-\'
+    local spinindex=0
+
+    tput civis # 隐藏光标
+
+    while :; do
+        completed=0
+        for pid in "${pids[@]}"; do
+            if ! kill -0 "$pid" 2>/dev/null; then
+                ((completed++))
+            fi
+        done
+
+        local percent=$((completed * 100 / total))
+        local bar_length=$((percent / 2)) # 50格进度条
+        local bar=$(printf '%-*s' "$bar_length" '' | tr ' ' '=')
+        local empty=$(printf '%-*s' "$((50-bar_length))" '' | tr ' ' '.')
+
+        # 取旋转字符
+        local spinchar="${spinstr:$spinindex:1}"
+        spinindex=$(( (spinindex + 1) % 4 ))
+        printf "\r\033[0;31;36m安装组件[%c] [%-50s] %3d%% (%d/%d)\033[0m" "$spinchar" "$bar$empty" "$percent" "$completed" "$total"
+
+        if [[ $completed -eq $total ]]; then
+            break
+        fi
+
+        sleep "$delay"
+    done
+
+    tput cnorm # 恢复光标
+    printf "\n"
+}
+
+
+
 # 检查文件是否存在
 filecheck() {
     local filename="$1"
@@ -131,7 +205,7 @@ filecheck() {
 
     (
 
-        # 下载链接列表，按顺序依次尝试 默认github
+        # 下载链接列表，按顺序依次尝试默认github
         local proxylinks=(
             "http://raw.githubusercontent.com"
             "https://gh.ddlc.top/http://raw.githubusercontent.com"
@@ -161,24 +235,22 @@ filecheck() {
 if [ ! -d "$installdir" ]; then
     slogo
     echo
-    jumpfun "welcome" 0.04
+    jumpfun "全新安装" 0.04
     echo
 
     mkdir -p "$installdir" "$installdir/core" "$installdir/log" "$installdir/config" "$installdir/module"
-
-    wget -N http://raw.githubusercontent.com/sshpc/s/main/version -O "$installdir/version"
 
     cp -f "$(pwd)/s.sh" "$installdir/s.sh"
     ln -s "$installdir/s.sh" /bin/s
 
 fi
 
-#加载版本
-selfversion=$(cat $installdir/version)
+
 
 #加载文件
 
 shfiles=(
+    'version'
     'core/common.sh'
     'core/menu.sh'
     'module/status.sh'
@@ -197,8 +269,15 @@ loading "${pids[@]}" # 显示加载动画
 wait                 # 等待所有子进程完成
 
 for shfile in "${shfiles[@]}"; do
-    source "$installdir/$shfile"
+    #如果是sh脚本则加载
+    if [[ $shfile == *.sh ]]; then
+        #加载脚本
+        source "$installdir/$shfile"
+    fi
 done
+
+#加载版本
+selfversion=$(cat $installdir/version)
 
 #主函数
 main() {
