@@ -256,7 +256,7 @@ selfversion=$(cat $installdir/version)
 main() {
     menuname='首页'
     echo "main" >$installdir/config/lastfun
-    options=("状态" statusfun "软件管理" softwarefun "网络管理" networkfun "system系统管理" systemfun "docker" dockerfun "其他工具" ordertoolsfun "升级脚本" updateself "卸载脚本" removeself)
+    options=("状态" statusfun "软件管理" softwarefun "网络管理" networkfun "system系统管理" systemfun "docker" dockerfun "其他工具" ordertoolsfun "升级脚本" updateself "卸载脚本" uninstallfun)
     menu "${options[@]}"
 }
 

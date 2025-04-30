@@ -25,26 +25,31 @@ _exists() {
     return ${rt}
 }
 
-#卸载脚本
+#移除脚本
 removeself() {
-    _red '确定移除所有内容?'
-    waitinput
-    #写入日志
-    slog set install "$datevar  | 脚本卸载 | v$selfversion"
     rm -rf $installdir/core/*
     rm -rf $installdir/config/*
     rm -rf $installdir/module/*
     rm -rf $installdir/version
+}
 
+#卸载脚本
+uninstallfun() {
+    _red '卸载核心和所有模块？'
+    waitinput
+
+    removeself
+    #写入日志
+    slog set install "$datevar  | 脚本卸载 | v$selfversion"
     read -ep "是否删除配置&日志 (默认n): " yorn
     if [[ "$yorn" = "y" ]]; then
         rm -rf $installdir
         rm -rf /bin/s
     fi
-    
     _blue '卸载完成'
     echo
     kill -15 $$
+
 }
 #脚本升级
 updateself() {
@@ -97,5 +102,3 @@ slog() {
     esac
 
 }
-
-
