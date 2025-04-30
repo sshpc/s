@@ -1,16 +1,10 @@
-menutop() {
-    clear
-    _green '# Ubuntu初始化&工具脚本'
-    _green '# Author:SSHPC <https://github.com/sshpc>'
-    echo
-    _blue ">~~~~~~~~~~~~~~ Ubuntu tools 脚本工具 ~~~~~~~~~~~~<  v: $selfversion"
-
-}
 
 menu() {
-    menutop
+    clear
     echo
-    _yellow "当前菜单: $menuname "
+    _blue "> ----- S [ $menuname ] -------- < v: $selfversion"
+    echo
+    _yellow "当前目录: [ $(pwd) ]"
     echo
 
     local options=("$@")

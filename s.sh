@@ -34,6 +34,10 @@ slogo() {
     # 隐藏光标
     tput civis
 
+    _green '# Ubuntu初始化&工具脚本'
+    _green '# Author:SSHPC <https://github.com/sshpc>'
+    echo
+
     # 定义要打印的内容
     local texts=(
         "   ________       "
@@ -122,38 +126,6 @@ loadingbak() {
 }
 
 # 进度条 loading
-loading1() {
-    local pids=("$@")
-    local total=${#pids[@]}
-    local completed=0
-
-    tput civis # 隐藏光标
-
-    while :; do
-        completed=0
-        for pid in "${pids[@]}"; do
-            if ! kill -0 "$pid" 2>/dev/null; then
-                ((completed++))
-            fi
-        done
-
-        local percent=$((completed * 100 / total))
-        local bar_length=$((percent / 2)) # 总长50个字符
-        local bar=$(printf '%-*s' "$bar_length" '' | tr ' ' '=')
-        local empty=$(printf '%-*s' "$((50-bar_length))" '' | tr ' ' '.')
-
-        printf "\r\033[0;31;36m[%-50s] %3d%% (%d/%d)\033[0m" "$bar$empty" "$percent" "$completed" "$total"
-
-        if [[ $completed -eq $total ]]; then
-            break
-        fi
-
-        sleep 0.2
-    done
-
-    tput cnorm # 恢复光标
-    printf "\n"
-}
 loading() {
     local pids=("$@")
     local total=${#pids[@]}
@@ -198,10 +170,6 @@ loading() {
 # 检查文件是否存在
 filecheck() {
     local filename="$1"
-
-    if [[ -f "$installdir/$filename" && -s "$installdir/$filename" ]]; then
-        return 0
-    fi
 
     (
 
@@ -262,11 +230,16 @@ shfiles=(
 )
 pids=()
 for shfile in "${shfiles[@]}"; do
-    filecheck $shfile
-    pids+=($!) # 收集子进程 PID
+    # 检查文件是否存在
+    if [[ ! -f "$installdir/$shfile" || ! -s "$installdir/$shfile" ]]; then
+        filecheck "$shfile" # 如果文件不存在或为空，调用 filecheck
+        pids+=($!)          # 收集子进程 PID
+    fi
 done
-loading "${pids[@]}" # 显示加载动画
-wait                 # 等待所有子进程完成
+if [[ ${#pids[@]} -gt 0 ]]; then
+    loading "${pids[@]}" # 显示加载动画
+    wait                 # 等待所有子进程完成
+fi
 
 for shfile in "${shfiles[@]}"; do
     #如果是sh脚本则加载
@@ -281,8 +254,8 @@ selfversion=$(cat $installdir/version)
 
 #主函数
 main() {
-
     menuname='首页'
+    echo "main" >$installdir/config/lastfun
     options=("状态" statusfun "软件管理" softwarefun "网络管理" networkfun "system系统管理" systemfun "docker" dockerfun "其他工具" ordertoolsfun "升级脚本" updateself "卸载脚本" removeself)
     menu "${options[@]}"
 }
