@@ -1,20 +1,56 @@
 dockerfun() {
 
-    dockerexec() {
+    checkcompose() {
+        # 检查当前目录是否存在 docker-compose.yml 文件
+        if [ ! -f "docker-compose.yml" ]; then
+            _red "当前目录没有 docker-compose.yml 文件"
+            exit
+        fi
+    }
+
+    catruncontainer() {
+        echo
         # 获取所有正在运行的容器
-        containers=$(docker ps --format 'table {{.ID}}\t{{.Names}}')
+        containers=$(docker ps --format 'table {{.Names}}\t{{.ID}}\t{{.Status}}')
 
         # 打印容器列表并添加序号
+        _green "当前正在运行的容器："
         echo
-        _blue "当前正在运行的容器："
-        echo "序号   容器ID         容器名称"
+        _blue "序号\t容器名称  容器ID         容器状态"
         i=1
         while read -r line; do
-            if [[ $line != "CONTAINER ID"* ]]; then # 跳过标题行
+            if [[ $line != "NAMES"* ]]; then # 跳过标题行
                 echo -e "$i\t$line"
                 ((i++))
             fi
         done <<<"$containers"
+        echo
+    }
+
+    catdockervolume() {
+        echo
+        echo "卷名              路径"
+        for volume in $(docker volume ls -q); do
+            _blue "$volume  $(docker volume inspect "$volume" --format '{{.Mountpoint}}')"
+        done
+    }
+
+    dockerstatusfun() {
+        echo
+        echo "compose情况"
+        echo
+        docker-compose ps
+        echo
+        echo "容器情况"
+        echo
+        _green 'runing'
+        docker ps
+        _blue 'all'
+        docker ps -a
+    }
+
+    dockerexec() {
+        catruncontainer
         echo
         read -p "请输入容器序号（从 1 开始）： " index
 
@@ -38,56 +74,18 @@ dockerfun() {
     }
 
     composestart() {
-        docker-compose up -d
-
-    }
-
-    composestart() {
+        checkcompose
         docker-compose start
-
     }
 
     composestop() {
+        checkcompose
         docker-compose stop
-    }
-
-    composeps() {
-        echo
-        echo "compose情况"
-        echo
-        docker-compose ps
-        echo
-        echo "容器情况"
-        echo
-        _green 'runing'
-        docker ps
-        _blue 'all'
-        docker ps -a
-    }
-
-    catdockervolume() {
-        echo
-        echo "卷名              路径"
-        for volume in $(docker volume ls -q); do
-            _blue "$volume  $(docker volume inspect "$volume" --format '{{.Mountpoint}}')"
-        done
     }
 
     restartcontainer() {
 
-        # 获取所有正在运行的容器
-        containers=$(docker ps --format 'table {{.ID}}\t{{.Names}}')
-
-        # 打印容器列表并添加序号
-        echo "当前正在运行的容器："
-        echo "序号   容器ID         容器名称"
-        i=1
-        while read -r line; do
-            if [[ $line != "CONTAINER ID"* ]]; then # 跳过标题行
-                echo -e "$i\t$line"
-                ((i++))
-            fi
-        done <<<"$containers"
+        catruncontainer
 
         # 提示用户输入要重启的容器序号
         read -p "请输入要重启的容器序号（从 1 开始）： " index
@@ -101,7 +99,9 @@ dockerfun() {
 
             # 重启容器
             _blue "正在重启容器：$index"
-            docker restart "$container_id"
+            docker restart "$container_id" &
+            loading $!
+            wait
             _green "已重启"
         else
             echo "无效的序号，请输入有效的序号。"
@@ -109,6 +109,7 @@ dockerfun() {
     }
 
     catcomposelogs() {
+        checkcompose
         docker-compose logs
     }
 
@@ -116,7 +117,8 @@ dockerfun() {
     maintenancefun() {
 
         composeinstall() {
-            docker-compose up -d --build
+            checkcompose
+            docker-compose up -d $1
 
             if [ $? -eq 0 ]; then
                 _blue '创建命名卷软连接 /home/docker/volume'
@@ -127,22 +129,25 @@ dockerfun() {
                 current_dir=/home/docker/volume
                 # 列出所有卷并遍历
                 for volume in $(docker volume ls -q); do
-                    # 获取卷的真实路径
                     mountpoint=$(docker volume inspect "$volume" --format '{{.Mountpoint}}')
-
-                    # 在当前目录创建指向真实路径的符号链接
-                    ln -s "$mountpoint" "$current_dir/$volume"
-
-                    _green "Created symlink for volume '$volume' at '$current_dir/$volume' -> '$mountpoint'"
+                    if [ ! -L "$current_dir/$volume" ]; then
+                        ln -s "$mountpoint" "$current_dir/$volume" >/dev/null 2>&1
+                        _green "Created symlink for volume '$volume' at '$current_dir/$volume' -> '$mountpoint'"
+                    fi
                 done
             fi
 
         }
 
         composedown() {
+            checkcompose
             docker-compose down
         }
 
+        composeinstallbuild() {
+            composeinstall '--build'
+        }
+        
         dockervolumerm() {
             catdockervolume
             echo
@@ -156,18 +161,42 @@ dockerfun() {
         }
 
         menuname='首页/docker/维护'
-        options=("开启" composestart "终止" composedown "安装-build" composeinstall "删除所有命名卷" dockervolumerm)
+        options=("安装" composeinstall "终止" composedown "安装-build(强制构建)" composeinstallbuild "删除所有命名卷" dockervolumerm)
 
         menu "${options[@]}"
     }
 
-    sshpcdockerapp() {
-        git clone https://github.com/sshpc/docker.git
+    catnetworkfun() {
+        echo
+        # 获取所有 Docker 网络
+        # 表头（字段宽度可根据实际微调）
+        printf "%-20s %-10s %-10s %-10s %-20s %-15s %-18s\n" "网络ID" "类别" "Driver" "Scope" "网络名称" "Gateway" "IPv4Address"
+
+        for network in $(docker network ls -q); do
+            info=$(docker network inspect "$network")
+            name=$(echo "$info" | jq -r '.[0].Name')
+            scope=$(echo "$info" | jq -r '.[0].Scope')
+            driver=$(echo "$info" | jq -r '.[0].Driver')
+            gateway=$(echo "$info" | jq -r '.[0].IPAM.Config[0].Gateway // ""')
+            ipv4=$(echo "$info" | jq -r '.[0].IPAM.Config[0].Subnet // ""')
+            internal=$(echo "$info" | jq -r '.[0].Internal')
+            [[ "$internal" == "true" ]] && type="internal" || type="external"
+
+            # 数据行
+            printf "%-18s %-10s %-8s %-10s %-20s %-15s %-18s\n" \
+                "$network" "$type" "$driver" "$scope" "$name" "$gateway" "$ipv4"
+        done
+
+        # 统计信息
+        total_networks=$(docker network ls -q | wc -l)
+        echo "总网络数: $total_networks"
+        echo
+
     }
 
     menuname='首页/docker'
     echo "dockerfun" >$installdir/config/lastfun
-    options=("启动" composestart "停止" composestop "查看状态" composeps "进入交互式容器" dockerexec "重启容器" restartcontainer "查看数据卷" catdockervolume "查看compose logs日志" catcomposelogs "安装&维护" maintenancefun "查看镜像" dockerimagesfun "下载sshpcdockerapp仓库" sshpcdockerapp)
+    options=("status查看状态" dockerstatusfun "exec进入容器" dockerexec "composestart启动" composestart "composestop停止" composestop "restartcontainer重启容器" restartcontainer "catdockervolume查看数据卷" catdockervolume "catcomposelogs查看日志" catcomposelogs "make&build安装&维护" maintenancefun "catimage查看镜像" dockerimagesfun "catnetwork查看网络" catnetworkfun)
 
     menu "${options[@]}"
 

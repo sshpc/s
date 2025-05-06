@@ -210,19 +210,26 @@ statusfun() {
 
         _blue "--路由表--" 
         route -n
+        _blue "--活动连接--"
+        tcpcount=$(netstat -antp | grep ESTABLISHED | wc -l)
+        udpcount=$(netstat -antp | grep -v ESTABLISHED | wc -l)
+        #计算百分比
+        
+        #计算总连接数
+        totalcount=$(($tcpcount + $udpcount))
+        #计算百分比
+        cent=$(echo "scale=2; $totalcount / 65535 * 100" | bc)
+        #最低1%
+        if [ $(echo "$cent < 1" | bc) -eq 1 ]; then
+            cent=1
+        fi
+        #输出结果
+        echo
+        echo "TCP连接数: $tcpcount UDP连接数: $udpcount 总计：$totalcount /65535 ($cent%)"
+        echo
         _blue "--监听端口--" 
         netstat -tunlp
-        _blue "--test IPv4/IPv6..." 
-        [[ -n ${local_curl} ]] && ip_check_cmd="curl -s -m 4" || ip_check_cmd="wget -qO- -T 4"
-        ipv4_check=$( (ping -4 -c 1 -W 4 ipv4.google.com >/dev/null 2>&1 && echo true) || ${ip_check_cmd} -4 icanhazip.com 2>/dev/null)
-        ipv6_check=$( (ping -6 -c 1 -W 4 ipv6.google.com >/dev/null 2>&1 && echo true) || ${ip_check_cmd} -6 icanhazip.com 2>/dev/null)
-        if [[ -z "$ipv4_check" && -z "$ipv6_check" ]]; then
-            _yellow "Warning: Both IPv4 and IPv6 connectivity were not detected.\n"
-        fi
-        [[ -z "$ipv4_check" ]] && online="$(_red "Offline")" || online="$(_green "Online")"
-        [[ -z "$ipv6_check" ]] && online+=" / $(_red "Offline")" || online+=" / $(_green "Online")"
-
-        echo "IPv4/IPv6          : $online"
+        echo
         _blue "--公网IP--" 
         curl cip.cc
         echo

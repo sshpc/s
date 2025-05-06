@@ -100,33 +100,10 @@ jumpfun() {
     echo
 }
 
-# 加载动画
-loadingbak() {
-    local pids=("$@")
-    local delay=0.1
-    local spinstr='|/-\'
-    tput civis # 隐藏光标
 
-    while :; do
-        local all_done=true
-        for pid in "${pids[@]}"; do
-            if kill -0 "$pid" 2>/dev/null; then
-                all_done=false
-                local temp=${spinstr#?}
-                printf "\r\033[0;31;36m[ %c ] 安装组件 ...\033[0m" "$spinstr"
-                local spinstr=$temp${spinstr%"$temp"}
-                sleep $delay
-            fi
-        done
-        [[ $all_done == true ]] && break
-    done
 
-    tput cnorm        # 恢复光标
-    printf "\r\033[K" # 清除行
-}
-
-# 进度条 loading
-loading() {
+# 进度条
+loadingprogressbar() {
     local pids=("$@")
     local total=${#pids[@]}
     local completed=0
@@ -237,7 +214,7 @@ for shfile in "${shfiles[@]}"; do
     fi
 done
 if [[ ${#pids[@]} -gt 0 ]]; then
-    loading "${pids[@]}" # 显示加载动画
+    loadingprogressbar "${pids[@]}" # 显示加载动画
     wait                 # 等待所有子进程完成
 fi
 
@@ -256,7 +233,7 @@ selfversion=$(cat $installdir/version)
 main() {
     menuname='首页'
     echo "main" >$installdir/config/lastfun
-    options=("状态" statusfun "软件管理" softwarefun "网络管理" networkfun "system系统管理" systemfun "docker" dockerfun "其他工具" ordertoolsfun "升级脚本" updateself "卸载脚本" uninstallfun)
+    options=("status状态" statusfun "software软件管理" softwarefun "network网络管理" networkfun "system系统管理" systemfun "docker管理" dockerfun "ordertool其他工具" ordertoolsfun "update升级脚本" updateself "uninstall卸载脚本" uninstallfun)
     menu "${options[@]}"
 }
 

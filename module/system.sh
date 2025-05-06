@@ -619,7 +619,7 @@ systemfun() {
 
     menuname='首页/系统'
     echo "systemfun" >$installdir/config/lastfun
-    options=( "ps进程搜索" pssearch "sshpubset写入ssh公钥" sshsetpub "rootsshpubkeyonly仅密钥root" sshpubonly "同步时间" synchronization_time "生成密钥对" sshgetpub "catkeys查看已存在ssh公钥" catkeys "计划任务" crontabfun "swap管理" swapfun "配置rc.local" rclocalfun "配置自定义服务" customservicefun "系统检查" systemcheck "性能测试" performancetest)
+    options=( "ps进程搜索" pssearch "setauthorized_keys写入ssh公钥" sshsetpub "rootsshkeypubonly仅密钥root" sshpubonly "synctime同步时间" synchronization_time "sshgetpub生成密钥对" sshgetpub "catauthorized_keys查看公钥" catkeys "crontab计划任务" crontabfun "swap管理" swapfun "rclocal配置" rclocalfun "customservice自定义服务" customservicefun "systemcheck系统检查" systemcheck "performancetest性能测试" performancetest)
 
     menu "${options[@]}"
 

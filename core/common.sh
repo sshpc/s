@@ -17,6 +17,31 @@ nextrun() {
 
 }
 
+# 加载动画
+loading() {
+    local pids=("$@")
+    local delay=0.1
+    local spinstr='|/-\'
+    tput civis # 隐藏光标
+
+    while :; do
+        local all_done=true
+        for pid in "${pids[@]}"; do
+            if kill -0 "$pid" 2>/dev/null; then
+                all_done=false
+                local temp=${spinstr#?}
+                printf "\r\033[0;31;36m[ %c ] loading ...\033[0m" "$spinstr"
+                local spinstr=$temp${spinstr%"$temp"}
+                sleep $delay
+            fi
+        done
+        [[ $all_done == true ]] && break
+    done
+
+    tput cnorm        # 恢复光标
+    printf "\r\033[K" # 清除行
+}
+
 #检测命令是否存在
 _exists() {
     local cmd="$1"
