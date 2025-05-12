@@ -121,36 +121,14 @@ systemfun() {
         next
 
         echo "检查重要日志文件是否存在:"
-        log_secure=/var/log/secure
-        log_messages=/var/log/messages
-        log_cron=/var/log/cron
-        log_boot=/var/log/boot.log
-        log_dmesg=/var/log/dmesg
-        if [ -e "$log_secure" ]; then
-            echo ">>>/var/log/secure日志文件存在"
-        else
-            echo ">>>/var/log/secure日志文件不存在------warning"
-        fi
-        if [ -e "$log_messages" ]; then
-            echo ">>>/var/log/messages日志文件存在"
-        else
-            echo ">>>/var/log/messages日志文件不存在------warning"
-        fi
-        if [ -e "$log_cron" ]; then
-            echo ">>>/var/log/cron日志文件存在"
-        else
-            echo ">>>/var/log/cron日志文件不存在--------warning"
-        fi
-        if [ -e "$log_boot" ]; then
-            echo ">>>/var/log/boot.log日志文件存在"
-        else
-            echo ">>>/var/log/boot.log日志文件不存在--------warning"
-        fi
-        if [ -e "$log_dmesg" ]; then
-            echo ">>>/var/log/dmesg日志文件存在"
-        else
-            echo ">>>/var/log/dmesg日志文件不存在--------warning"
-        fi
+        for i in /var/log/secure /var/log/messages /var/log/cron /var/log/boot.log /var/log/dmesg; do
+            if [ -e "$i" ]; then
+                echo ">>>$i日志文件存在"
+            else
+                echo ">>>$i日志文件不存在------warning"
+            fi
+        done
+        next
         echo "系统入侵行为:"
         more /var/log/secure | grep refused
         if [ $? == 0 ]; then

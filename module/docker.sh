@@ -196,7 +196,7 @@ dockerfun() {
 
     menuname='首页/docker'
     echo "dockerfun" >$installdir/config/lastfun
-    options=("status查看状态" dockerstatusfun "exec进入容器" dockerexec "composestart启动" composestart "composestop停止" composestop "restartcontainer重启容器" restartcontainer "catdockervolume查看数据卷" catdockervolume "catcomposelogs查看日志" catcomposelogs "make&build安装&维护" maintenancefun "catimage查看镜像" dockerimagesfun "catnetwork查看网络" catnetworkfun)
+    options=("查看状态" dockerstatusfun "exec进入容器" dockerexec "启动容器" composestart "停止容器" composestop "重启容器" restartcontainer "查看数据卷" catdockervolume "查看日志" catcomposelogs "make&build安装&维护" maintenancefun "查看docker镜像" dockerimagesfun "查看docker网络" catnetworkfun)
 
     menu "${options[@]}"
 

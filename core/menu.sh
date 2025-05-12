@@ -2,9 +2,9 @@
 menu() {
     clear
     echo
-    _blue "> ----- S [ $menuname ] -------- < v: $selfversion"
+    _blue "> ----- S 当前目录: [ $(pwd) ] -------- < v: $selfversion"
     echo
-    _yellow "当前目录: [ $(pwd) ]"
+    _yellow "当前菜单: $menuname "
     echo
 
     local options=("$@")

@@ -1,8 +1,5 @@
 # 交互式shell脚本工具
 
-
-
-
 ## 示例
 
 ```sh
@@ -40,18 +37,14 @@ wget -N  http://raw.githubusercontent.com/sshpc/s/main/s.sh && chmod +x s.sh && 
  root@server:~#  s
 ```
 
-## 破旧立新
-这是一次朴实的回归，更是情怀的延续
+国内加速链接
+```sh
+wget -N  https://gh.ddlc.top/http://raw.githubusercontent.com/sshpc/s/main/s.sh && chmod +x s.sh && sudo ./s.sh
 ```
- ________      
-|\   ____\     
-\ \  \___|_    
- \ \_____  \   
-  \|____|\  \  
-    ____\_\  \ 
-   |\_________\
-   \|_________|
+```sh
+wget -N  https://git.886.be/http://raw.githubusercontent.com/sshpc/s/main/s.sh && chmod +x s.sh && sudo ./s.sh
 ```
+
 
 
 
