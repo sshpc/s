@@ -1,7 +1,13 @@
 
 menu() {
     clear
+    
     echo
+    # 检查是否有新版本
+    if [ -n "$latestversion" ] && [ "$selfversion" != "$latestversion" ]; then
+        _yellow "发现新版本！v: $latestversion"
+        echo
+    fi
     _blue "> ----- S 当前目录: [ $(pwd) ] -------- < v: $selfversion"
     echo
     _yellow "当前菜单: $menuname "

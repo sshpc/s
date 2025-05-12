@@ -229,11 +229,55 @@ done
 #加载版本
 selfversion=$(cat $installdir/version)
 
+# 版本更新检测逻辑
+getlatestversion() {
+    (
+        # 下载链接列表，复用filecheck的多源逻辑
+        proxylinks=(
+            "http://raw.githubusercontent.com"
+            "https://gh.ddlc.top/http://raw.githubusercontent.com"
+            "https://git.886.be/http://raw.githubusercontent.com"
+        )
+        timeout=4
+        success=0
+        for proxylink in "${proxylinks[@]}"; do
+            wget -q --timeout="$timeout" "${proxylink}/sshpc/s/main/version" -O "$latestversion_file.tmp" >/dev/null 2>&1
+            if [[ -f "$latestversion_file.tmp" && -s "$latestversion_file.tmp" ]]; then
+                mv "$latestversion_file.tmp" "$latestversion_file"
+                success=1
+                break
+            else
+                rm -f "$latestversion_file.tmp"
+            fi
+        done
+        
+    ) &
+}
+latestversion_file="$installdir/config/latestversion"
+
+if [ ! -f "$latestversion_file" ] ; then
+touch "$latestversion_file" 
+getlatestversion
+fi
+
+current_time=$(date +%s)
+file_mod_time=$(stat -c %Y "$latestversion_file" 2>/dev/null)
+time_diff=$((current_time - file_mod_time))
+
+# 如果时间差超过1天（86400秒）或文件不存在，则后台更新latestversion
+if [ -z "$file_mod_time" ] || [ $time_diff -ge 86400 ]; then
+    getlatestversion
+fi
+
+# 加载最新版本号
+latestversion=$(cat "$latestversion_file" 2>/dev/null)
+
 #主函数
 main() {
     menuname='首页'
     echo "main" >$installdir/config/lastfun
-    options=("status状态" statusfun "software软件管理" softwarefun "network网络管理" networkfun "system系统管理" systemfun "docker管理" dockerfun "ordertool其他工具" ordertoolsfun "update升级脚本" updateself "uninstall卸载脚本" uninstallfun)
+
+    options=("状态" statusfun "软件管理" softwarefun "网络管理" networkfun "系统管理" systemfun "docker管理" dockerfun "其他工具" ordertoolsfun "升级脚本" updateself "卸载脚本" uninstallfun)
     menu "${options[@]}"
 }
 
