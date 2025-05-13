@@ -264,8 +264,8 @@ current_time=$(date +%s)
 file_mod_time=$(stat -c %Y "$latestversion_file" 2>/dev/null)
 time_diff=$((current_time - file_mod_time))
 
-# 如果时间差超过1天（86400秒）或文件不存在，则后台更新latestversion
-if [ -z "$file_mod_time" ] || [ $time_diff -ge 86400 ]; then
+# 如果时间差超过1h或文件不存在，则后台更新latestversion
+if [ -z "$file_mod_time" ] || [ $time_diff -ge 3600 ]; then
     getlatestversion
 fi
 

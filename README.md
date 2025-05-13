@@ -25,7 +25,7 @@
 ## 安装
 
 ### 一键安装(推荐)
-> 推荐 root 用户
+> 推荐ubuntu 1804+ root 用户
 
 ```sh
 wget -N  http://raw.githubusercontent.com/sshpc/s/main/s.sh && chmod +x s.sh && sudo ./s.sh
