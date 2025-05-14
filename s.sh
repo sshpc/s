@@ -88,19 +88,6 @@ slogo() {
     tput cnorm
 }
 
-#逐字打印
-jumpfun() {
-    my_string=$1
-    delay=${2:-0.1}
-    # 循环输出每个字符
-    for ((i = 0; i < ${#my_string}; i++)); do
-        printf '\033[0;31;36m%b\033[0m' "${my_string:$i:1}"
-        sleep "$delay"
-    done
-    echo
-}
-
-
 
 # 进度条
 loadingprogressbar() {
@@ -180,7 +167,7 @@ filecheck() {
 if [ ! -d "$installdir" ]; then
     slogo
     echo
-    jumpfun "全新安装" 0.04
+    _blue "欢迎使用"
     echo
 
     mkdir -p "$installdir" "$installdir/core" "$installdir/log" "$installdir/config" "$installdir/module"

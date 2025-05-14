@@ -76,26 +76,75 @@ uninstallfun() {
     kill -15 $$
 
 }
-#脚本升级
+# 高可用下载函数，目标下载到指定目录
+download_with_mirrors() {
+    local filename="$1"
+    local output="$2/$filename"
+    local proxylinks=(
+        "http://raw.githubusercontent.com"
+        "https://gh.ddlc.top/http://raw.githubusercontent.com"
+        "https://git.886.be/http://raw.githubusercontent.com"
+    )
+    local timeout=4
+
+    for base in "${proxylinks[@]}"; do
+        wget -q --timeout="$timeout" "${base}/sshpc/s/main/$filename" -O "$output"
+        if [[ -s "$output" ]]; then
+            return 0
+        else
+            rm -f "$output"
+        fi
+    done
+
+    return 1
+}
+
+# 升级自身脚本函数
 updateself() {
+    local tmpdir="$installdir/tmp"
+    mkdir -p "$tmpdir"
 
-    _blue '下载最新版'
-    wget -N http://raw.githubusercontent.com/sshpc/s/main/s.sh -O "$installdir/s.sh"
-    # 检查上一条命令的退出状态码
-    if [ $? -eq 0 ]; then
-        _blue '卸载旧版...'
-        removeself
-        #写入日志
-        slog set install "$datevar  | 脚本升级"
-        wget -N http://raw.githubusercontent.com/sshpc/s/main/version -O "$installdir/version"
-        chmod +x "$installdir/s.sh"
-        s
+    _blue "尝试下载最新版脚本和版本信息..."
 
+    local s_file_ok=false
+    local v_file_ok=false
+
+    if download_with_mirrors "s.sh" "$tmpdir"; then
+        _green "s.sh 下载成功"
+        s_file_ok=true
     else
-        _red "下载失败,请重试"
+        _red "s.sh 下载失败"
     fi
 
+    if download_with_mirrors "version" "$tmpdir"; then
+        _green "version 下载成功"
+        v_file_ok=true
+    else
+        _yellow "version 下载失败"
+    fi
+
+    if $s_file_ok && $v_file_ok; then
+        _blue "验证通过，准备更新"
+
+        # 拷贝到正式目录
+        cp "$tmpdir/s.sh" "$installdir/s.sh"
+        cp "$tmpdir/version" "$installdir/version"
+        chmod +x "$installdir/s.sh"
+
+        slog set install "$datevar  | 脚本升级"
+        _blue "卸载旧版本..."
+        removeself
+
+        exec "$installdir/s.sh"
+    else
+        _red "升级条件不满足，未执行更新"
+    fi
+
+    # 无论如何清理临时目录
+    rm -rf "$tmpdir"
 }
+
+
 
 #异常终止函数
 _exit() {
