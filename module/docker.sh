@@ -44,54 +44,51 @@ dockerfun() {
         VOLUMES=$(docker volume ls -q | wc -l)
         
         _blue "基本信息"
-        echo "运行中: ${RUNNING_CONTAINERS} / 总容器: ${TOTAL_CONTAINERS} 网络: ${NETWORKS} | 卷: ${VOLUMES}"
+        echo "运行中/共: ${RUNNING_CONTAINERS}/${TOTAL_CONTAINERS} 网络: ${NETWORKS} | 卷: ${VOLUMES}"
 
-        
+        _blue "docker端口映射"
+        if [ "$RUNNING_CONTAINERS" -gt 0 ]; then
+            docker ps --format '{{.Names}}\t{{.Ports}}' | while IFS=$'\t' read -r name ports; do
+                if [[ "$ports" == *"->"* ]]; then
+                    echo "$ports" | tr ',' '\n' | while read -r mapping; do
+                        [[ "$mapping" == *"->"* ]] || continue
+                        host_port="${mapping%%->*}"
+                        host_port="${host_port##*:}"
+                        container_port="${mapping##*->}"
+                        echo "$name|$host_port|$container_port"
+                    done
+                fi
+            done | sort -u | while IFS='|' read -r name host_port container_port; do
+                echo -e "主机端口 $host_port -> 容器端口 $container_port \033[32m [$name] \033[0m   "
+            done
+        fi
         echo
-        echo "compose情况"
-        echo
+        _blue "compose情况"
         if [ ! -f "docker-compose.yml" ]; then
             _red "当前目录没有 docker-compose.yml 文件"
         else
             docker-compose ps
         fi
         echo
-        echo "容器情况"
-        echo
+        _blue "容器情况"
         _green 'runing'
         docker ps
         _blue 'all'
         docker ps -a
-        _blue '监控'
+        echo
+        _blue '容器监控'
         docker stats --no-stream
-        # 检查 Docker 容器端口映射
-        _blue "端口映射"
-        if [ "$RUNNING_CONTAINERS" -gt 0 ]; then
-            docker ps --format '{{.Names}}\t{{.Ports}}' | while IFS=$'\t' read -r name ports; do
-            if [[ "$ports" == *"->"* ]]; then
-                echo "$ports" | tr ',' '\n' | while read -r mapping; do
-                    [[ "$mapping" == *"->"* ]] || continue
-                    host_port="${mapping%%->*}"
-                    host_port="${host_port##*:}"
-                    container_port="${mapping##*->}"
-                    echo -e "\e[32m容器:\e[0m $name  主机端口 $host_port -> 容器端口 $container_port"
-                done
-            fi
-            done
-        fi
+        
         echo
         _blue "Docker情况"
-        echo
         # 检查 Docker 是否通过 snap 安装
         if command -v snap &> /dev/null && ( snap list | grep -q "docker" ) >/dev/null 2>&1; then
             echo "检测到 Docker 通过 snap 安装"
-            SNAP_DAEMON_CONFIG="$HOME/snap/docker/current/config/daemon.json"
+            SNAP_DAEMON_CONFIG="var/snap/docker/current/config/daemon.json"
             
             # 检查 snap 配置文件
             if [ -f "$SNAP_DAEMON_CONFIG" ]; then
                 echo "snap Docker 配置文件: $SNAP_DAEMON_CONFIG"
-                echo "配置内容:"
-                cat "$SNAP_DAEMON_CONFIG" 2>/dev/null || echo "无法读取配置文件内容"
             else
                 echo "snap Docker 配置文件不存在: $SNAP_DAEMON_CONFIG"
             fi
@@ -103,11 +100,13 @@ dockerfun() {
         DEFAULT_CONFIG="/etc/docker/daemon.json"
         if [ -f "$DEFAULT_CONFIG" ]; then
             echo "配置文件: $DEFAULT_CONFIG"
-            echo "配置内容:"
-            cat "$DEFAULT_CONFIG" 2>/dev/null || echo "无法读取配置文件内容"
         else
             echo "系统默认 Docker 配置文件不存在: $DEFAULT_CONFIG"
         fi
+        # 检查当前生效的镜像代理
+        echo "当前生效的镜像代理配置:"
+        docker info 2>/dev/null | grep -A1 -i "registry mirrors" || echo "未配置镜像代理"
+
 
     }
 
