@@ -259,9 +259,12 @@ systemfun() {
         ecstest() {
             curl -L https://github.com/spiritLHLS/ecs/raw/main/ecs.sh -o ecs.sh && chmod +x ecs.sh && bash ecs.sh
         }
+        mysqlBenchfun(){
+            wget -N  http://raw.githubusercontent.com/sshpc/mysql-bench/main/mysql-bench.sh && chmod +x mysql-bench.sh && sudo ./mysql-bench.sh
+        }
 
         menuname='首页/系统/性能测试'
-        options=("sysbench-cpu测试" sysbenchcputest "stress-cpu压测" cputest "磁盘测速" iotestspeed "跑分" FastBenchfun "融合怪测试" ecstest)
+        options=("sysbench-cpu测试" sysbenchcputest "stress-cpu压测" cputest "磁盘测速" iotestspeed "机器跑分" FastBenchfun "融合怪测试" ecstest "mysql跑分测试" mysqlBenchfun)
 
         menu "${options[@]}"
 
