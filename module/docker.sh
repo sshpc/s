@@ -255,9 +255,83 @@ dockerfun() {
 
     }
 
+    dockerimageimportexport() {
+
+        dockerimageexportone() {
+            echo
+            _blue "当前镜像列表："
+            echo -e "\033[36m序号\t镜像名称\t\t镜像ID\t\t大小\033[0m"
+
+            images=()
+            i=1
+            docker images --format "{{.Repository}}:{{.Tag}}|{{.ID}}|{{.Size}}" | while IFS='|' read -r name id size; do
+                images+=("$name")
+                printf "%s\t%-20s\t%-12s\t%s\n" "$i" "$name" "$id" "$size"
+                ((i++))
+            done
+
+            echo
+            read -p "请输入要导出的镜像序号（从 1 开始）: " index
+
+            # 重新获取镜像名列表（因为 while 中的 images 变量是 subshell）
+            mapfile -t images < <(docker images --format "{{.Repository}}:{{.Tag}}")
+
+            mkdir -p ./img
+
+            if [[ "$index" -gt 0 && "$index" -le "${#images[@]}" ]]; then
+                image_name="${images[$((index - 1))]}"
+                filename="./img/${image_name//[:\/]/_}.tar"
+                _blue "导出镜像 $image_name 为 $filename"
+                docker save -o "$filename" "$image_name" &
+                loading $!
+                wait
+                _green "导出成功：$filename"
+            else
+                _red "无效的序号"
+            fi
+            nextrun
+        }
+
+
+        dockerimageexportall() {
+            mkdir -p ./img
+            _blue "开始批量导出镜像到 ./img 目录..."
+            for image in $(docker images --format "{{.Repository}}:{{.Tag}}"); do
+                filename="./img/${image//[:\/]/_}.tar"
+                _blue "导出镜像 $image -> $filename"
+                docker save -o "$filename" "$image" &
+                pids+=($!)          # 收集子进程 PID
+            done
+            loadingprogressbar "${pids[@]}" # 显示加载动画
+            wait                 # 等待所有子进程完成
+            _green "导出成功"
+            nextrun
+        }
+
+        dockerimageimportall() {
+            if [ ! -d "./img" ]; then
+                _red "当前目录下没有 img 文件夹"
+                return
+            fi
+
+            _blue "开始导入 ./img 目录中的镜像文件..."
+            for file in ./img/*.tar; do
+                [ -e "$file" ] || { _red "没有找到任何 .tar 镜像文件"; return; }
+                _blue "导入镜像文件: $file"
+                docker load -i "$file" && _green "导入成功" || _red "导入失败"
+            done
+            nextrun
+        }
+
+        menuname='首页/docker/镜像导入导出'
+        options=("单个导出" dockerimageexportone "批量导出" dockerimageexportall "批量导入" dockerimageimportall)
+        menu "${options[@]}"
+    }
+
+
     menuname='首页/docker'
     echo "dockerfun" >$installdir/config/lastfun
-    options=("查看状态" dockerstatusfun "exec进入容器" dockerexec "启动容器" composestart "停止容器" composestop "重启容器" restartcontainer "查看数据卷" catdockervolume "查看日志" catcomposelogs "make&build安装&维护" maintenancefun "查看docker镜像" dockerimagesfun "查看docker网络" catnetworkfun)
+    options=("查看状态" dockerstatusfun "exec进入容器" dockerexec "启动容器" composestart "停止容器" composestop "重启容器" restartcontainer "查看数据卷" catdockervolume "查看日志" catcomposelogs "make&build安装&维护" maintenancefun "查看docker镜像" dockerimagesfun "查看docker网络" catnetworkfun "镜像导入导出" dockerimageimportexport)
 
     menu "${options[@]}"
 

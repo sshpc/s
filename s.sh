@@ -116,7 +116,7 @@ loadingprogressbar() {
         # 取旋转字符
         local spinchar="${spinstr:$spinindex:1}"
         spinindex=$(( (spinindex + 1) % 4 ))
-        printf "\r\033[0;31;36m安装组件[%c] [%-50s] %3d%% (%d/%d)\033[0m" "$spinchar" "$bar$empty" "$percent" "$completed" "$total"
+        printf "\r\033[0;31;36mloading[%c] [%-50s] %3d%% (%d/%d)\033[0m" "$spinchar" "$bar$empty" "$percent" "$completed" "$total"
 
         if [[ $completed -eq $total ]]; then
             break
