@@ -231,7 +231,9 @@ statusfun() {
         netstat -tunlp
         echo
         _blue "--公网IP--" 
-        curl cip.cc
+        echo "From cip.cc:" $(curl cip.cc)
+        echo
+        echo "From ifconfig.me:" $(curl ifconfig.me)
         echo
         _blue "--ip地区--" 
         local org city country region

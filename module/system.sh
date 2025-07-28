@@ -2,16 +2,36 @@ systemfun() {
 
     #同步时间
     synchronization_time() {
-        echo "同步前的时间: $(date -R)"
-        echo "同步为上海时间?"
-        waitinput
-        cp /usr/share/zoneinfo/Asia/Shanghai /etc/localtime
-        timedatectl set-timezone Asia/Shanghai
-        timedatectl set-local-rtc 0
-        timedatectl set-ntp yes
-        hwclock -w
-        systemctl restart rsyslog.service cron.service
-        echo "当前系统时间: $(date -R)"
+                echo "同步前的时间: $(date -R)"
+        echo "同步为上海时间? (y/n)"
+        read -r confirm
+        if [[ "$confirm" =~ ^[Yy]$ ]]; then
+            # 先备份原时区文件
+            if [ -f "/etc/localtime" ]; then
+                cp -a /etc/localtime /etc/localtime.bak."$(date +%Y%m%d%H%M%S)"
+            fi
+            # 使用符号链接而非直接复制，避免文件系统问题
+            ln -snf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime
+            timedatectl set-timezone Asia/Shanghai
+            timedatectl set-local-rtc 0
+            # 检查ntpd服务是否存在，不存在则安装
+            if ! command -v ntpd &> /dev/null; then
+                echo "正在安装ntp服务..."
+                apt-get update &> /dev/null && apt-get install -y ntp &> /dev/null
+            fi
+            timedatectl set-ntp yes
+            hwclock -w
+            # 检查服务是否存在再重启
+            for service in rsyslog cron; do
+                if systemctl is-active --quiet "$service"; then
+                    systemctl restart "$service"
+                fi
+            done
+            echo "当前系统时间: $(date -R)"
+            echo "时间同步完成"
+        else
+            echo "已取消时间同步"
+        fi
     }
     #配置仅秘钥rootssh登录
     sshpubonly() {
