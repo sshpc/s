@@ -138,8 +138,48 @@ EOF
         menu "${options[@]}"
     }
 
+        chownwwwdata() {
+        echo
+        # 获取当前路径下的所有目录（不含隐藏目录）
+        dirs=($(ls -d */ 2>/dev/null | sed 's#/##'))
+        if [[ ${#dirs[@]} -eq 0 ]]; then
+            echo "当前目录下没有可用目录"
+            return 1
+        fi
+
+        # 打印带序号的目录列表
+        _blue "序号\t目录名"
+        for i in "${!dirs[@]}"; do
+            echo -e "$((i + 1))\t${dirs[$i]}"
+        done
+        echo
+
+        # 用户输入序号
+        read -rp "请输入目录序号（从 1 开始）： " index
+
+        # 检查序号合法性
+        if [[ "$index" =~ ^[0-9]+$ ]] && (( index >= 1 && index <= ${#dirs[@]} )); then
+            dirtmp=${dirs[$((index - 1))]}
+
+            # 确认
+            read -rp "确认将 '$dirtmp' (包含子目录) 权限修改为 www-data? [y/N]: " confirm
+            if [[ "$confirm" =~ ^[Yy]$ ]]; then
+                chown -R www-data:www-data "$dirtmp"
+                echo
+                ls -ld "$dirtmp"
+                _blue '权限修改完成'
+            else
+                echo "已取消操作。"
+            fi
+        else
+            echo "无效的序号，请输入有效的数字。"
+            return 1
+        fi
+    }
+
+
     menuname='首页/其他工具'
     echo "ordertoolsfun" >$installdir/config/lastfun
-    options=("统计根目录占用" statisticsusage "多线程下载" aria2fun "统计目录文件行数" countfileslines "安装git便捷提交" igitcommiteasy "杀死vscode进程" killvscode "Siege-web压力测试" siegetest "hping3-DDOS" hping3fun "打满自身内存" Fillupownmemory "综合功能脚本" IntegratedFunctionScript)
+    options=("配置目录权限www-data" chownwwwdata "统计根目录占用" statisticsusage "多线程下载" aria2fun "统计目录文件行数" countfileslines "安装git便捷提交" igitcommiteasy "杀死vscode进程" killvscode "Siege-web压力测试" siegetest "hping3-DDOS" hping3fun "打满自身内存" Fillupownmemory "综合功能脚本" IntegratedFunctionScript)
     menu "${options[@]}"
 }
