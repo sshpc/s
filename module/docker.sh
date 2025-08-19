@@ -75,38 +75,7 @@ dockerfun() {
         docker ps
         _blue 'all'
         docker ps -a
-        echo
-        _blue '容器监控'
-        docker stats --no-stream
         
-        echo
-        _blue "Docker情况"
-        # 检查 Docker 是否通过 snap 安装
-        if command -v snap &> /dev/null && ( snap list | grep -q "docker" ) >/dev/null 2>&1; then
-            echo "检测到 Docker 通过 snap 安装"
-            SNAP_DAEMON_CONFIG="var/snap/docker/current/config/daemon.json"
-            
-            # 检查 snap 配置文件
-            if [ -f "$SNAP_DAEMON_CONFIG" ]; then
-                echo "snap Docker 配置文件: $SNAP_DAEMON_CONFIG"
-            else
-                echo "snap Docker 配置文件不存在: $SNAP_DAEMON_CONFIG"
-            fi
-        else
-            echo "检测到 Docker 通过常规方式安装"
-        fi
-
-        # 检查系统默认配置文件
-        DEFAULT_CONFIG="/etc/docker/daemon.json"
-        if [ -f "$DEFAULT_CONFIG" ]; then
-            echo "配置文件: $DEFAULT_CONFIG"
-        else
-            echo "系统默认 Docker 配置文件不存在: $DEFAULT_CONFIG"
-        fi
-        # 检查当前生效的镜像代理
-        echo "当前生效的镜像代理配置:"
-        docker info 2>/dev/null | grep -A1 -i "registry mirrors" || echo "未配置镜像代理"
-
 
     }
 
@@ -174,10 +143,7 @@ dockerfun() {
         docker-compose logs
     }
 
-    #维护
-    maintenancefun() {
-
-        composeinstall() {
+    composeinstall() {
             checkcompose
             docker-compose up -d $1
 
@@ -208,7 +174,7 @@ dockerfun() {
         composeinstallbuild() {
             composeinstall '--build'
         }
-        
+
         dockervolumerm() {
             catdockervolume
             echo
@@ -221,11 +187,7 @@ dockerfun() {
             done
         }
 
-        menuname='首页/docker/维护'
-        options=("安装" composeinstall "终止" composedown "安装-build(强制构建)" composeinstallbuild "删除所有命名卷" dockervolumerm)
-
-        menu "${options[@]}"
-    }
+    
 
     catnetworkfun() {
         echo
@@ -328,10 +290,56 @@ dockerfun() {
         menu "${options[@]}"
     }
 
+    dockerstatusadvancedfun(){
+        echo
+        _blue '容器监控'
+        docker stats --no-stream
+        
+        echo
+        _blue "Docker情况"
+        # 检查 Docker 是否通过 snap 安装
+        if command -v snap &> /dev/null && ( snap list | grep -q "docker" ) >/dev/null 2>&1; then
+            echo "检测到 Docker 通过 snap 安装"
+            SNAP_DAEMON_CONFIG="var/snap/docker/current/config/daemon.json"
+            
+            # 检查 snap 配置文件
+            if [ -f "$SNAP_DAEMON_CONFIG" ]; then
+                echo "snap Docker 配置文件: $SNAP_DAEMON_CONFIG"
+            else
+                echo "snap Docker 配置文件不存在: $SNAP_DAEMON_CONFIG"
+            fi
+        else
+            echo "检测到 Docker 通过常规方式安装"
+        fi
+
+        # 检查系统默认配置文件
+        DEFAULT_CONFIG="/etc/docker/daemon.json"
+        if [ -f "$DEFAULT_CONFIG" ]; then
+            echo "配置文件: $DEFAULT_CONFIG"
+        else
+            echo "系统默认 Docker 配置文件不存在: $DEFAULT_CONFIG"
+        fi
+        # 检查当前生效的镜像代理
+        echo "当前生效的镜像代理配置:"
+        docker info 2>/dev/null | grep -A1 -i "registry mirrors" || echo "未配置镜像代理"
+
+
+    }
+
+
+    #维护
+    othercommands() {
+
+        menuname='首页/docker/维护'
+        options=("查看状态(高级)" dockerstatusadvancedfun "启动容器" composestart "停止容器" composestop "查看数据卷" catdockervolume "删除所有命名卷" dockervolumerm "查看docker镜像" dockerimagesfun "查看docker网络" catnetworkfun "镜像导入导出" dockerimageimportexport )
+
+        menu "${options[@]}"
+    }
+
 
     menuname='首页/docker'
     echo "dockerfun" >$installdir/config/lastfun
-    options=("查看状态" dockerstatusfun "exec进入容器" dockerexec "启动容器" composestart "停止容器" composestop "重启容器" restartcontainer "查看数据卷" catdockervolume "查看日志" catcomposelogs "make&build安装&维护" maintenancefun "查看docker镜像" dockerimagesfun "查看docker网络" catnetworkfun "镜像导入导出" dockerimageimportexport)
+    options=("查看状态" dockerstatusfun "重启容器" restartcontainer "安装" composeinstall  "安装(强制构建)" composeinstallbuild "终止" composedown "exec进入容器" dockerexec    "查看日志" catcomposelogs "其他" othercommands )
 
     menu "${options[@]}"
 
