@@ -35,6 +35,29 @@ dockerfun() {
         done
     }
 
+    catdockerimg() {
+        echo
+        _blue "镜像列表："
+        echo -e "\033[36m序号\t镜像名称\t\t\t镜像ID\t\t大小\t\t状态\033[0m"
+
+        images=()
+        i=1
+        # 获取正在使用的镜像列表
+        used_images=($(docker ps --format '{{.Image}}' | sort | uniq))
+        docker images --format "{{.Repository}}:{{.Tag}}|{{.ID}}|{{.Size}}" | while IFS='|' read -r name id size; do
+            images+=("$name")
+            status=""
+            for used in "${used_images[@]}"; do
+                if [[ "$name" == "$used" ]]; then
+                status="（已使用）"
+                break
+                fi
+            done
+            printf "%s\t%-30s\t%-12s\t%-10s\t%s\n" "$i" "$name" "$id" "$size" "$status"
+            ((i++))
+        done
+    }
+
     dockerstatusfun() {
         echo
         # 统计信息
@@ -98,22 +121,46 @@ dockerfun() {
         nextrun
 
     }
-    dockerimagesfun() {
+    
+
+    dockerimagesrm() {
         
-        echo
-        _blue "正在使用的镜像："
-        docker ps --format '{{.Image}}' | sort | uniq | while read -r image; do
-            info=$(docker images --format '{{.Repository}}:{{.Tag}}\t{{.ID}}\t{{.Size}}' | grep "^$image")
-            if [ -n "$info" ]; then
-            echo -e "$info"
+        # 列出将要删除的悬空镜像
+        unused_images=$(docker images -f "dangling=true" -q)
+        if [ -n "$unused_images" ]; then
+            _blue "将要删除的悬空镜像ID："
+            docker images -f "dangling=true"
+        else
+            _green "没有悬空镜像"
+        fi
+
+        # 列出将要删除的未被使用的镜像
+        _blue "将要删除的未被使用的镜像："
+        docker images --filter "dangling=false" --format "{{.Repository}}:{{.Tag}}\t{{.ID}}" | while read -r line; do
+            image_id=$(echo "$line" | awk '{print $2}')
+            # 检查是否被容器使用
+            if ! docker ps -a --format '{{.Image}}' | grep -qw "$(echo "$line" | awk '{print $1}')"; then
+                echo "$line"
             fi
         done
-        if [ -z "$(docker ps --format '{{.Image}}')" ]; then
-            echo "当前没有正在使用的镜像"
+
+        read -p "请输入 y 或 n: " confirm
+        if [[ "$confirm" != "y" ]]; then
+            _blue "已取消操作"
+            return
         fi
-        echo
-        _blue "所有镜像："
-        docker images
+
+        if [ -n "$unused_images" ]; then
+            docker rmi $unused_images && _green "已删除所有悬空镜像"
+        fi
+
+        # 删除所有未被使用的镜像
+        _blue "正在删除所有未被使用的镜像..."
+        docker image prune -a -f
+        loading $!
+        wait
+        _green "已清理所有未被使用的镜像"
+
         nextrun
     }
 
@@ -266,26 +313,7 @@ dockerfun() {
         fi
 
         dockerimageexportone() {
-            echo
-            _blue "当前镜像列表："
-            echo -e "\033[36m序号\t镜像名称\t\t镜像ID\t\t大小\t\t状态\033[0m"
-
-            images=()
-            i=1
-            # 获取正在使用的镜像列表
-            used_images=($(docker ps --format '{{.Image}}' | sort | uniq))
-            docker images --format "{{.Repository}}:{{.Tag}}|{{.ID}}|{{.Size}}" | while IFS='|' read -r name id size; do
-            images+=("$name")
-            status=""
-            for used in "${used_images[@]}"; do
-                if [[ "$name" == "$used" ]]; then
-                status="（已使用）"
-                break
-                fi
-            done
-            printf "%s\t%-20s\t%-12s\t%-10s\t%s\n" "$i" "$name" "$id" "$size" "$status"
-            ((i++))
-            done
+            catdockerimg
 
             echo
             read -p "请输入要导出的镜像序号（从 1 开始）: " index
@@ -436,7 +464,7 @@ dockerfun() {
     othercommands() {
 
         menuname='首页/docker/其他'
-        options=("查看状态(高级)" dockerstatusadvancedfun "启动容器" composestart "停止容器" composestop "查看数据卷" catdockervolume "删除命名卷" dockervolumerm "查看docker镜像" dockerimagesfun "查看docker网络" catnetworkfun "镜像导入导出" dockerimageimportexport )
+        options=("查看状态(高级)" dockerstatusadvancedfun "启动容器" composestart "停止容器" composestop "查看数据卷" catdockervolume "删除命名卷" dockervolumerm "查看docker镜像" catdockerimg "删除无用镜像" dockerimagesrm "查看docker网络" catnetworkfun "镜像导入导出" dockerimageimportexport )
 
         menu "${options[@]}"
     }
