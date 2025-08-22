@@ -99,6 +99,20 @@ dockerfun() {
 
     }
     dockerimagesfun() {
+        
+        echo
+        _blue "正在使用的镜像："
+        docker ps --format '{{.Image}}' | sort | uniq | while read -r image; do
+            info=$(docker images --format '{{.Repository}}:{{.Tag}}\t{{.ID}}\t{{.Size}}' | grep "^$image")
+            if [ -n "$info" ]; then
+            echo -e "$info"
+            fi
+        done
+        if [ -z "$(docker ps --format '{{.Image}}')" ]; then
+            echo "当前没有正在使用的镜像"
+        fi
+        echo
+        _blue "所有镜像："
         docker images
         nextrun
     }
@@ -152,7 +166,9 @@ dockerfun() {
 
                 # 获取目录
                 #current_dir=$(pwd)
-                mkdir -p /home/docker/volume
+                if [ ! -d "/home/docker/volume" ]; then
+                    mkdir -p /home/docker/volume
+                fi
                 current_dir=/home/docker/volume
                 # 列出所有卷并遍历
                 for volume in $(docker volume ls -q); do
@@ -175,16 +191,42 @@ dockerfun() {
             composeinstall '--build'
         }
 
-        dockervolumerm() {
+        
+
+        dockervolumerm_one() {
+            catdockervolume
+            echo
+            read -p "请输入要删除的数据卷名称: " volume
+            if docker volume ls -q | grep -wq "$volume"; then
+            docker volume rm "$volume" && _green "已删除数据卷 $volume"
+            rm -rf "/home/docker/volume/$volume"
+            else
+            _red "未找到数据卷 $volume"
+            fi
+        }
+
+        dockervolumerm_unused() {
+            _red "确定删除所有未使用的数据卷吗?"
+            waitinput
+            _red "正在删除未使用的数据卷并移除软链接"
+            for volume in $(docker volume ls -qf "dangling=true"); do
+            docker volume rm "$volume"
+            rm -rf "/home/docker/volume/$volume"
+            done
+            _green "未使用的数据卷已删除"
+        }
+
+        dockervolumerm_all() {
             catdockervolume
             echo
             _red '确定全部删除吗?'
             waitinput
             _red "删除并移除软链接"
             for volume in $(docker volume ls -q); do
-                docker volume rm $volume
-                rm -r $volume
+            docker volume rm "$volume"
+            rm -rf "/home/docker/volume/$volume"
             done
+            _green "所有数据卷已删除"
         }
 
     
@@ -219,17 +261,30 @@ dockerfun() {
 
     dockerimageimportexport() {
 
+        if [ ! -d "/home/img" ]; then
+            mkdir -p /home/img
+        fi
+
         dockerimageexportone() {
             echo
             _blue "当前镜像列表："
-            echo -e "\033[36m序号\t镜像名称\t\t镜像ID\t\t大小\033[0m"
+            echo -e "\033[36m序号\t镜像名称\t\t镜像ID\t\t大小\t\t状态\033[0m"
 
             images=()
             i=1
+            # 获取正在使用的镜像列表
+            used_images=($(docker ps --format '{{.Image}}' | sort | uniq))
             docker images --format "{{.Repository}}:{{.Tag}}|{{.ID}}|{{.Size}}" | while IFS='|' read -r name id size; do
-                images+=("$name")
-                printf "%s\t%-20s\t%-12s\t%s\n" "$i" "$name" "$id" "$size"
-                ((i++))
+            images+=("$name")
+            status=""
+            for used in "${used_images[@]}"; do
+                if [[ "$name" == "$used" ]]; then
+                status="（已使用）"
+                break
+                fi
+            done
+            printf "%s\t%-20s\t%-12s\t%-10s\t%s\n" "$i" "$name" "$id" "$size" "$status"
+            ((i++))
             done
 
             echo
@@ -238,25 +293,43 @@ dockerfun() {
             # 重新获取镜像名列表（因为 while 中的 images 变量是 subshell）
             mapfile -t images < <(docker images --format "{{.Repository}}:{{.Tag}}")
 
-            mkdir -p /home/img
 
             if [[ "$index" -gt 0 && "$index" -le "${#images[@]}" ]]; then
-                image_name="${images[$((index - 1))]}"
-                filename="/home/img/${image_name//[:\/]/_}.tar"
-                _blue "导出镜像 $image_name 为 $filename"
-                docker save -o "$filename" "$image_name" &
-                loading $!
-                wait
-                _green "导出成功：$filename"
+            image_name="${images[$((index - 1))]}"
+            filename="/home/img/${image_name//[:\/]/_}.tar"
+            _blue "导出镜像 $image_name 为 $filename"
+            docker save -o "$filename" "$image_name" &
+            loading $!
+            wait
+            _green "导出成功：$filename"
             else
-                _red "无效的序号"
+            _red "无效的序号"
             fi
+            nextrun
+        }
+
+        dockerimageexportuseall(){
+            _blue "正在导出正在使用的镜像到 /home/img 目录..."
+            used_images=($(docker ps --format '{{.Image}}' | sort | uniq))
+            if [ ${#used_images[@]} -eq 0 ]; then
+                _red "当前没有正在使用的镜像"
+                nextrun
+            fi
+            for image in "${used_images[@]}"; do
+                filename="/home/img/${image//[:\/]/_}.tar"
+                _blue "导出镜像 $image -> $filename"
+                docker save -o "$filename" "$image" &
+                pids+=($!)
+            done
+            loadingprogressbar "${pids[@]}"
+            wait
+            _green "导出成功"
+            ls /home/img
             nextrun
         }
 
 
         dockerimageexportall() {
-            mkdir -p /home/img
             _blue "开始批量导出镜像到 /home/img 目录..."
             for image in $(docker images --format "{{.Repository}}:{{.Tag}}"); do
                 filename="/home/img/${image//[:\/]/_}.tar"
@@ -267,6 +340,7 @@ dockerfun() {
             loadingprogressbar "${pids[@]}" # 显示加载动画
             wait                 # 等待所有子进程完成
             _green "导出成功"
+            ls /home/img
             nextrun
         }
 
@@ -279,14 +353,39 @@ dockerfun() {
             _blue "开始导入 /home/img 目录中的镜像文件..."
             for file in /home/img/*.tar; do
                 [ -e "$file" ] || { _red "没有找到任何 .tar 镜像文件"; return; }
-                _blue "导入镜像文件: $file"
-                docker load -i "$file" && _green "导入成功" || _red "导入失败"
+                # 获取镜像名
+                image_name=$(tar -tf "$file" | grep manifest.json | xargs -I{} tar -xOf "$file" {} | jq -r '.[0].RepoTags[0]')
+                if [ -n "$image_name" ] && docker images | grep -q "$image_name"; then
+                    _red "已存在同名镜像 $image_name"
+                    echo "请选择操作：1 覆盖（删除旧镜像） 2 跳过 3 共存（导入后会有同名不同ID）"
+                    read -p "输入选项（1/2/3）: " choice
+                    case "$choice" in
+                        1)
+                            docker rmi "$image_name"
+                            _blue "已删除旧镜像，准备导入..."
+                            docker load -i "$file" && _green "导入成功" || _red "导入失败"
+                            ;;
+                        2)
+                            _blue "已跳过 $image_name"
+                            ;;
+                        3)
+                            _blue "共存模式，导入后会有同名不同ID镜像"
+                            docker load -i "$file" && _green "导入成功" || _red "导入失败"
+                            ;;
+                        *)
+                            _red "无效选项，已跳过 $image_name"
+                            ;;
+                    esac
+                else
+                    _blue "导入镜像文件: $file"
+                    docker load -i "$file" && _green "导入成功" || _red "导入失败"
+                fi
             done
             nextrun
         }
 
         menuname='首页/docker/镜像导入导出'
-        options=("单个导出" dockerimageexportone "批量导出" dockerimageexportall "批量导入" dockerimageimportall)
+        options=("单个导出" dockerimageexportone "批量导出已使用的镜像" dockerimageexportuseall  "批量导出全部镜像" dockerimageexportall "批量导入" dockerimageimportall)
         menu "${options[@]}"
     }
 
@@ -326,12 +425,18 @@ dockerfun() {
 
     }
 
+    dockervolumerm() {
+        menuname='首页/docker/删除数据卷'
+        options=("删除单个数据卷" dockervolumerm_one "删除所有未使用的数据卷" dockervolumerm_unused "删除所有数据卷" dockervolumerm_all)
+        menu "${options[@]}"
+    }
 
-    #维护
+
+    #其他
     othercommands() {
 
-        menuname='首页/docker/维护'
-        options=("查看状态(高级)" dockerstatusadvancedfun "启动容器" composestart "停止容器" composestop "查看数据卷" catdockervolume "删除所有命名卷" dockervolumerm "查看docker镜像" dockerimagesfun "查看docker网络" catnetworkfun "镜像导入导出" dockerimageimportexport )
+        menuname='首页/docker/其他'
+        options=("查看状态(高级)" dockerstatusadvancedfun "启动容器" composestart "停止容器" composestop "查看数据卷" catdockervolume "删除命名卷" dockervolumerm "查看docker镜像" dockerimagesfun "查看docker网络" catnetworkfun "镜像导入导出" dockerimageimportexport )
 
         menu "${options[@]}"
     }
