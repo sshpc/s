@@ -50,6 +50,35 @@ softwarefun() {
         echo "所有包都已安装完成"
     }
 
+    smbdinstall(){
+         # 检查是否已安装samba（只判断ii状态）
+        if ! dpkg -l | grep -E '^ii' | grep -qw samba; then
+            apt update
+            apt install samba -y
+        fi
+
+        
+        # 备份原配置，文件名带日期时间，避免重复覆盖
+        backup_time=$(date +"%Y%m%d_%H%M%S")
+        cp /etc/samba/smb.conf /etc/samba/smb.conf.bak.$backup_time
+
+        # 添加/home匿名共享配置
+        echo "" >> /etc/samba/smb.conf
+        echo "[home]" >> /etc/samba/smb.conf
+        echo "   path = /home" >> /etc/samba/smb.conf
+        echo "   browseable = yes" >> /etc/samba/smb.conf
+        echo "   writable = yes" >> /etc/samba/smb.conf
+        echo "   guest ok = yes" >> /etc/samba/smb.conf
+        echo "   force user = root" >> /etc/samba/smb.conf
+        echo "   force group = root" >> /etc/samba/smb.conf
+
+        # 重启samba服务
+        systemctl restart smbd
+        systemctl restart nmbd
+
+        _blue "samba 安装并配置完成，/home 目录可匿名读写，权限为 root。"
+    }
+
     #换源
     changemirrors() {
         cnmainland() {
@@ -218,7 +247,7 @@ softwarefun() {
 
     menuname='首页/软件'
     echo "softwarefun" >$installdir/config/lastfun
-    options=("aptupdate软件更新" aptupdatefun "修复更新" configureaptfun "换软件源" changemirrors "snap管理" snapfun "软件卸载" removefun "安装常用包" installcomso 安装docker dockerinstall "安装snap版docker" dockersnapinstall "安装btop" installbtop "安装八合一" installbaheyi "安装xui" installxui "安装openvpn" installopenvpn "安装aapanel" installaapanel "安装RustDesk-Server" installrustdeskserver)
+    options=("aptupdate软件更新" aptupdatefun "修复更新" configureaptfun "换软件源" changemirrors "snap管理" snapfun "软件卸载" removefun "安装常用包" installcomso "安装smbd" smbdinstall 安装docker dockerinstall "安装snap版docker" dockersnapinstall "安装btop" installbtop "安装八合一" installbaheyi "安装xui" installxui "安装openvpn" installopenvpn "安装aapanel" installaapanel "安装RustDesk-Server" installrustdeskserver)
     menu "${options[@]}"
 
 }

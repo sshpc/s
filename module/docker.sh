@@ -238,11 +238,11 @@ dockerfun() {
             # 重新获取镜像名列表（因为 while 中的 images 变量是 subshell）
             mapfile -t images < <(docker images --format "{{.Repository}}:{{.Tag}}")
 
-            mkdir -p ./img
+            mkdir -p /home/img
 
             if [[ "$index" -gt 0 && "$index" -le "${#images[@]}" ]]; then
                 image_name="${images[$((index - 1))]}"
-                filename="./img/${image_name//[:\/]/_}.tar"
+                filename="/home/img/${image_name//[:\/]/_}.tar"
                 _blue "导出镜像 $image_name 为 $filename"
                 docker save -o "$filename" "$image_name" &
                 loading $!
@@ -256,10 +256,10 @@ dockerfun() {
 
 
         dockerimageexportall() {
-            mkdir -p ./img
-            _blue "开始批量导出镜像到 ./img 目录..."
+            mkdir -p /home/img
+            _blue "开始批量导出镜像到 /home/img 目录..."
             for image in $(docker images --format "{{.Repository}}:{{.Tag}}"); do
-                filename="./img/${image//[:\/]/_}.tar"
+                filename="/home/img/${image//[:\/]/_}.tar"
                 _blue "导出镜像 $image -> $filename"
                 docker save -o "$filename" "$image" &
                 pids+=($!)          # 收集子进程 PID
@@ -271,13 +271,13 @@ dockerfun() {
         }
 
         dockerimageimportall() {
-            if [ ! -d "./img" ]; then
+            if [ ! -d "/home/img" ]; then
                 _red "当前目录下没有 img 文件夹"
                 return
             fi
 
-            _blue "开始导入 ./img 目录中的镜像文件..."
-            for file in ./img/*.tar; do
+            _blue "开始导入 /home/img 目录中的镜像文件..."
+            for file in /home/img/*.tar; do
                 [ -e "$file" ] || { _red "没有找到任何 .tar 镜像文件"; return; }
                 _blue "导入镜像文件: $file"
                 docker load -i "$file" && _green "导入成功" || _red "导入失败"
