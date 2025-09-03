@@ -8,7 +8,7 @@ dockerfun() {
         fi
     }
 
-    catruncontainer() {
+    catruncontainerbak() {
         echo
         # 获取所有正在运行的容器
         containers=$(docker ps --format 'table {{.Names}}\t{{.ID}}\t{{.Status}}')
@@ -26,6 +26,42 @@ dockerfun() {
         done <<<"$containers"
         echo
     }
+
+    catruncontainer() {
+        echo
+        local cmd="docker ps --format 'table {{.Names}}\t{{.ID}}\t{{.Status}}'"
+
+        # 参数判断
+        if [[ "$1" == "-all" ]]; then
+            cmd="docker ps -a --format 'table {{.Names}}\t{{.ID}}\t{{.Status}}'"
+        elif [[ "$1" == "-stop" ]]; then
+            cmd="docker ps -a --filter 'status=exited' --format 'table {{.Names}}\t{{.ID}}\t{{.Status}}'"
+        fi
+
+        containers=$(eval "$cmd")
+
+        # 打印容器列表并添加序号
+        if [[ "$1" == "-stop" ]]; then
+            _green "当前已停止的容器："
+        elif [[ "$1" == "-all" ]]; then
+            _green "当前所有容器："
+        else
+            _green "当前正在运行的容器："
+        fi
+
+        echo
+        _blue "序号\t容器名称  容器ID         容器状态"
+
+        i=1
+        while read -r line; do
+            if [[ $line != "NAMES"* ]]; then # 跳过标题行
+                echo -e "$i\t$line"
+                ((i++))
+            fi
+        done <<<"$containers"
+        echo
+    }
+
 
     catdockervolume() {
         echo
@@ -194,6 +230,56 @@ dockerfun() {
             loading $!
             wait
             _green "已重启"
+        else
+            echo "无效的序号，请输入有效的序号。"
+        fi
+    }
+
+    startcontainer() {
+
+        catruncontainer -stop
+
+        # 提示用户输入要启动的容器序号
+        read -p "请输入要启动的容器序号（从 1 开始）： " index
+
+        # 获取已停止容器的 ID 列表
+        container_ids=($(docker ps -a -q -f status=exited))
+
+        # 检查输入的序号是否有效
+        if [[ "$index" -gt 0 && "$index" -le "${#container_ids[@]}" ]]; then
+            container_id=${container_ids[$((index - 1))]}
+
+            # 启动容器
+            _blue "正在启动容器：$index"
+            docker start "$container_id" &
+            loading $!
+            wait
+            _green "已启动"
+        else
+            echo "无效的序号，请输入有效的序号。"
+        fi
+    }
+
+    stopcontainer() {
+
+        catruncontainer
+
+        # 提示用户输入要停止的容器序号
+        read -p "请输入要停止的容器序号（从 1 开始）： " index
+
+        # 获取容器的 ID 列表
+        container_ids=($(docker ps -q))
+
+        # 检查输入的序号是否有效
+        if [[ "$index" -gt 0 && "$index" -le "${#container_ids[@]}" ]]; then
+            container_id=${container_ids[$((index - 1))]}
+
+            # 停止容器
+            _blue "正在停止容器：$index"
+            docker stop "$container_id" &
+            loading $!
+            wait
+            _green "已停止"
         else
             echo "无效的序号，请输入有效的序号。"
         fi
@@ -464,7 +550,7 @@ dockerfun() {
     othercommands() {
 
         menuname='首页/docker/其他'
-        options=("查看状态(高级)" dockerstatusadvancedfun "启动容器" composestart "停止容器" composestop "查看数据卷" catdockervolume "删除命名卷" dockervolumerm "查看docker镜像" catdockerimg "删除无用镜像" dockerimagesrm "查看docker网络" catnetworkfun "镜像导入导出" dockerimageimportexport )
+        options=("查看状态(高级)" dockerstatusadvancedfun "查看docker网络" catnetworkfun "启动容器" startcontainer "停止容器" stopcontainer "批量启动容器" composestart "批量停止容器" composestop "查看数据卷" catdockervolume "删除命名卷" dockervolumerm "查看docker镜像" catdockerimg "删除无用镜像" dockerimagesrm  "镜像导入导出" dockerimageimportexport )
 
         menu "${options[@]}"
     }

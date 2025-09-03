@@ -38,12 +38,8 @@ wget -N  http://raw.githubusercontent.com/sshpc/s/main/s.sh && chmod +x s.sh && 
 ```
 
 国内加速链接
-> 2条都可以用。国内安装会慢一些 因为默认从github拉取
 ```sh
 wget -N  https://gh.ddlc.top/http://raw.githubusercontent.com/sshpc/s/main/s.sh && chmod +x s.sh && sudo ./s.sh
-```
-```sh
-wget -N  https://git.886.be/http://raw.githubusercontent.com/sshpc/s/main/s.sh && chmod +x s.sh && sudo ./s.sh
 ```
 
 
