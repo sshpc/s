@@ -1,5 +1,8 @@
 
 menu() {
+    if [ $is_param_mode -eq 1 ]; then
+    return
+    fi
     clear
     
     echo

@@ -1,8 +1,6 @@
 #!/bin/bash
 export LANG=en_US.UTF-8
 
-#定义全局变量
-
 #安装目录
 installdir=$HOME/s
 #日期时间
@@ -267,6 +265,23 @@ main() {
     options=("状态" statusfun "软件管理" softwarefun "网络管理" networkfun "系统管理" systemfun "docker管理" dockerfun "其他工具" ordertoolsfun "升级脚本" updateself "卸载脚本" uninstallfun)
     menu "${options[@]}"
 }
+
+# 处理命令行参数（直接执行函数）
+is_param_mode=0  # 新增：标记是否为参数模式
+if [ $# -gt 0 ]; then
+  is_param_mode=1  # 有参数时进入参数模式
+  # 循环执行所有参数对应的函数
+  for func in "$@"; do
+    # 检查函数是否存在
+    if declare -F "$func" >/dev/null 2>&1; then
+      $func  # 执行函数
+    else
+      _red "错误：函数 '$func' 不存在"
+      exit 1
+    fi
+  done
+  exit 0
+fi
 
 #判断配置文件是否存在或是否是真实函数
 
