@@ -76,16 +76,11 @@ uninstallfun() {
     kill -15 $$
 
 }
-# 高可用下载函数，目标下载到指定目录
+
 download_with_mirrors() {
     local filename="$1"
     local output="$2/$filename"
-    local proxylinks=(
-        "http://raw.githubusercontent.com"
-        "https://gh.ddlc.top/http://raw.githubusercontent.com"
-        "https://git.886.be/http://raw.githubusercontent.com"
-    )
-    local timeout=4
+    local timeout=3
 
     for base in "${proxylinks[@]}"; do
         wget -q --timeout="$timeout" "${base}/sshpc/s/main/$filename" -O "$output"

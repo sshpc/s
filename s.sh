@@ -7,6 +7,14 @@ installdir=$HOME/s
 datevar=$(date +"%Y-%m-%d %H:%M:%S")
 #默认主页
 menuname='主页'
+# 配置代理主机列表（github加速）
+proxyhost=(
+    "https://gh.ddlc.top"
+    "https://gh-proxy.com"
+    "https://edgeone.gh-proxy.com"
+    "https://cdn.gh-proxy.com"
+    "https://hk.gh-proxy.com"
+)
 
 # 颜色定义
 _red() {
@@ -132,18 +140,9 @@ loadingprogressbar() {
 # 检查文件是否存在
 filecheck() {
     local filename="$1"
-
     (
-
-        # 下载链接列表，按顺序依次尝试默认github
-        local proxylinks=(
-            "http://raw.githubusercontent.com"
-            "https://gh.ddlc.top/http://raw.githubusercontent.com"
-            "https://git.886.be/http://raw.githubusercontent.com"
-        )
-
         # 设置超时时间（秒）
-        local timeout=4
+        local timeout=3
 
         for proxylink in "${proxylinks[@]}"; do
 
@@ -176,6 +175,17 @@ if [ ! -d "$installdir" ]; then
 fi
 
 
+
+# 原始基础URL
+original_url="http://raw.githubusercontent.com"
+
+# 初始化链接列表并添加原始URL作为第一个元素
+proxylinks=("$original_url")
+
+# 循环处理代理主机，生成完整代理链接并添加到列表
+for host in "${proxyhost[@]}"; do
+    proxylinks+=("${host}/${original_url}")
+done
 
 #加载文件
 
@@ -217,13 +227,7 @@ selfversion=$(cat $installdir/version)
 # 版本更新检测逻辑
 getlatestversion() {
     (
-        # 下载链接列表，复用filecheck的多源逻辑
-        proxylinks=(
-            "http://raw.githubusercontent.com"
-            "https://gh.ddlc.top/http://raw.githubusercontent.com"
-            "https://git.886.be/http://raw.githubusercontent.com"
-        )
-        timeout=4
+        timeout=3
         success=0
         for proxylink in "${proxylinks[@]}"; do
             wget -q --timeout="$timeout" "${proxylink}/sshpc/s/main/version" -O "$latestversion_file.tmp" >/dev/null 2>&1

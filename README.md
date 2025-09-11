@@ -41,6 +41,12 @@ wget -N  http://raw.githubusercontent.com/sshpc/s/main/s.sh && chmod +x s.sh && 
 ```sh
 wget -N  https://gh.ddlc.top/http://raw.githubusercontent.com/sshpc/s/main/s.sh && chmod +x s.sh && sudo ./s.sh
 ```
+```sh
+wget -N  https://gh-proxy.com/http://raw.githubusercontent.com/sshpc/s/main/s.sh && chmod +x s.sh && sudo ./s.sh
+```
+```sh
+wget -N  https://edgeone.gh-proxy.com/http://raw.githubusercontent.com/sshpc/s/main/s.sh && chmod +x s.sh && sudo ./s.sh
+```
 ## 说明
 
 新增参数模式 可传入多个函数参数，从而不进入交互操作直接执行
