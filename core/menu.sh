@@ -1,26 +1,14 @@
 
 menu() {
-    if [ $is_param_mode -eq 1 ]; then
-    return
-    fi
-    clear
+    # 渲染菜单前 检查是否有beforeMenu函数，执行
+    declare -F beforeMenu >/dev/null 2>&1 && beforeMenu
     
-    echo
-    # 检查是否有新版本
-    if [ -n "$latestversion" ] && [ "$selfversion" != "$latestversion" ]; then
-        _yellow "发现新版本！v: $latestversion"
-        echo
-    fi
-    _blue "> ----- S脚本 当前目录: [ $(pwd) ] -------- < v: $selfversion"
-    echo
-    _yellow "当前菜单: $menuname "
-    echo
 
     local options=("$@")
     local num_options=${#options[@]}
     local max_len=0
 
-    for ((i = 0; i < num_options; i += 2)); do
+    for ((i = 0; i < num_options; i += 1)); do
         local str_len=${#options[i]}
         ((str_len > max_len)) && max_len=$str_len
     done
@@ -42,7 +30,7 @@ menu() {
         #函数名赋值
         parentfun=${options[action_index]}
         #记录运行日志
-        slog set run "$datevar | $menuname | ${options[action_index]} (${options[action_index - 1]})"
+        declare -F slog >/dev/null 2>&1 && slog set runscript "$datevar | $menuname | ${options[action_index]} (${options[action_index - 1]})"
 
         #函数执行
         ${options[action_index]}

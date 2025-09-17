@@ -28,7 +28,7 @@
 > 推荐ubuntu 1804+ root 用户
 
 ```sh
-wget -N  http://raw.githubusercontent.com/sshpc/s/main/s.sh && chmod +x s.sh && sudo ./s.sh
+wget -N  http://raw.githubusercontent.com/sshpc/s/main/s.sh && chmod +x s.sh &&  bash s.sh
 ```
 
 > 再次执行只需要输入 “s” 
@@ -39,13 +39,13 @@ wget -N  http://raw.githubusercontent.com/sshpc/s/main/s.sh && chmod +x s.sh && 
 
 国内加速链接
 ```sh
-wget -N  https://gh.ddlc.top/http://raw.githubusercontent.com/sshpc/s/main/s.sh && chmod +x s.sh && sudo ./s.sh
+wget -N  https://gh.ddlc.top/http://raw.githubusercontent.com/sshpc/s/main/s.sh && chmod +x s.sh &&  bash s.sh
 ```
 ```sh
-wget -N  https://gh-proxy.com/http://raw.githubusercontent.com/sshpc/s/main/s.sh && chmod +x s.sh && sudo ./s.sh
+wget -N  https://gh-proxy.com/http://raw.githubusercontent.com/sshpc/s/main/s.sh && chmod +x s.sh &&  bash s.sh
 ```
 ```sh
-wget -N  https://edgeone.gh-proxy.com/http://raw.githubusercontent.com/sshpc/s/main/s.sh && chmod +x s.sh && sudo ./s.sh
+wget -N  https://edgeone.gh-proxy.com/http://raw.githubusercontent.com/sshpc/s/main/s.sh && chmod +x s.sh &&  bash s.sh
 ```
 ## 说明
 

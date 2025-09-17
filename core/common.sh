@@ -1,6 +1,3 @@
-#异常终止执行函数
-trap _exit INT QUIT TERM
-
 # 等待输入
 waitinput() {
     echo
@@ -147,8 +144,44 @@ _exit() {
         rm -rf ./speedtest-cli
     fi
     #_red "\n exit. again run 's'\n"
-    exit 1
+    #exit 1
+
+    local status=$1
+    echo "$(date '+%F %T') [$$] EXIT with status $status" >&19
+    exit $status
 }
+#异常终止执行函数
+trap _exit INT QUIT TERM
+
+LOGFILE="${installdir}/log/runscript.log"
+
+# 把 xtrace 输出到日志文件
+exec 19>>"$LOGFILE"
+set -T   # 子 shell / 函数也触发 DEBUG
+
+# 白名单数组（不写日志的外部命令）
+CMD_WHITELIST=("sleep" "clear" "tr" "wc" "cat" "awk" "sort")
+
+# 判断是否在白名单里
+in_whitelist() {
+    local c="$1"
+    for w in "${CMD_WHITELIST[@]}"; do
+        if [[ "$c" == "$w" ]]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+# 捕获外部程序命令
+BASH_COMMAND_LOGGER() {
+    local cmd="${BASH_COMMAND%% *}"   # 取第一个单词
+    # 仅记录外部程序 & 不在白名单
+    if [ "$(type -t "$cmd" 2>/dev/null)" = "file" ] && ! in_whitelist "$cmd"; then
+        echo "$(date '+%F %T') [$$] $BASH_COMMAND" >&19
+    fi
+}
+trap BASH_COMMAND_LOGGER DEBUG
 
 #s日志读写
 slog() {
@@ -170,4 +203,22 @@ slog() {
         ;;
     esac
 
+}
+
+beforeMenu(){
+    if [ $is_param_mode -eq 1 ]; then
+    return
+    fi
+    clear
+    
+    echo
+    # 检查是否有新版本
+    if [ -n "$latestversion" ] && [ "$selfversion" != "$latestversion" ]; then
+        _yellow "发现新版本！v: $latestversion"
+        echo
+    fi
+    _blue "> ----- S脚本 当前目录: [ $(pwd) ] -------- < v: $selfversion"
+    echo
+    _yellow "当前菜单: $menuname "
+    echo
 }

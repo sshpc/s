@@ -48,6 +48,27 @@ statusfun() {
         [ -f /etc/lsb-release ] && awk -F'[="]+' '/DESCRIPTION/{print $2}' /etc/lsb-release && return
     }
 
+    get_power_mode() {
+        local mode=""
+        if command -v powerprofilesctl >/dev/null 2>&1; then
+            # Fedora / Ubuntu 新系统
+            mode=$(powerprofilesctl get 2>/dev/null)
+        elif [ -f /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor ]; then
+            # 通用 CPU governor
+            mode=$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor 2>/dev/null)
+        elif command -v cpupower >/dev/null 2>&1; then
+            mode=$(cpupower frequency-info --policy 2>/dev/null | awk -F: '/current policy/ {print $2}' | awk '{print $1}')
+        fi
+
+        case "$mode" in
+            performance) echo "性能";;
+            balanced|ondemand|schedutil) echo "均衡";;
+            power-saver|powersave) echo "节能";;
+            *) echo "";;
+        esac
+    }
+
+
 
     sysinfo() {
         cname=$(awk -F: '/model name/ {name=$2} END {print name}' /proc/cpuinfo | sed 's/^[ \t]*//;s/[ \t]*$//')
@@ -67,6 +88,7 @@ statusfun() {
         up=$(awk '{a=$1/86400;b=($1%86400)/3600;c=($1%3600)/60} {printf("%d days, %d hour %d min\n",a,b,c)}' /proc/uptime)
         opsy=$(get_opsy)
         arch=$(uname -m)
+        power_mode=$(get_power_mode)
         if _exists "getconf"; then
             lbit=$(getconf LONG_BIT)
         else
@@ -178,6 +200,9 @@ statusfun() {
         echo " Kernel             : $(_blue "$kern")"
         echo " TCP CC             : $(_yellow "$tcpctrl")"
         echo " Virtualization     : $(_blue "$virt")"
+        if [ -n "$power_mode" ]; then
+        echo " Power Mode         : $(_blue "$power_mode")"
+        fi
     }
 
     #磁盘详细信息
@@ -265,7 +290,9 @@ statusfun() {
     }
 
     catselfrunlog(){
-        slog get run
+        echo
+        slog get runscript
+        echo
     }
 
     menuname='首页/状态'

@@ -36,6 +36,7 @@ softwarefun() {
         packages=(
             "wget"
             "curl"
+            "sudo"
             "net-tools"
             "vim"
             "openssh-server"
