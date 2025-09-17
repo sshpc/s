@@ -61,9 +61,9 @@ statusfun() {
         fi
 
         case "$mode" in
-            performance) echo "性能";;
-            balanced|ondemand|schedutil) echo "均衡";;
-            power-saver|powersave) echo "节能";;
+            performance) echo "performance";;
+            balanced|ondemand|schedutil) echo "ondemand";;
+            power-saver|powersave) echo "powersave";;
             *) echo "";;
         esac
     }

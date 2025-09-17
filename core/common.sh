@@ -160,7 +160,7 @@ exec 19>>"$LOGFILE"
 set -T   # 子 shell / 函数也触发 DEBUG
 
 # 白名单数组（不写日志的外部命令）
-CMD_WHITELIST=("sleep" "clear" "tr" "wc" "cat" "awk" "sort")
+CMD_WHITELIST=("sleep" "clear" "tr" "wc" "cat" "awk" "sort" "sed")
 
 # 判断是否在白名单里
 in_whitelist() {
