@@ -15,7 +15,7 @@ proxyhost=(
 # 默认主页
 menuname='主页'
 #分支(main 正式版 dev开发版)
-branch='main'
+branch='dev'
 # 日期时间
 datevar=$(date +"%Y-%m-%d %H:%M:%S")
 # 颜色定义
@@ -293,11 +293,10 @@ download_file_bg() {
 
     (
         if ! download_file "$filename" "$output"; then
-            _red "文件 $filename 下载失败！"
-            exit 1
+        _red "文件 $filename 下载失败！"
+        exit 1
         fi
     ) &
-    echo $!   # 返回子进程 PID
 }
 
 # 升级自身脚本函数
@@ -401,15 +400,16 @@ loadfilefun() {
     pids=()
     for shfile in "${shfiles[@]}"; do
         if [[ ! -s "$installdir/$shfile" ]]; then
-            pid=$(download_file_bg "$shfile")
-            pids+=("$pid")
+            download_file_bg "$shfile" # 如果文件不存在或为空，调用 filecheck
+            pids+=($!)          # 收集子进程 PID
         fi
     done
 
     if [[ ${#pids[@]} -gt 0 ]]; then
-        _blue '文件下载中'
-        loadingprogressbar "${pids[@]}"
-        wait
+        echo
+        _yellow '文件下载中'
+        loadingprogressbar "${pids[@]}" # 显示下载进度
+        wait # 等待所有子进程完成
     fi
 
     # 加载脚本
