@@ -15,7 +15,7 @@ proxyhost=(
 # 默认主页
 menuname='主页'
 #分支(main 正式版 dev开发版)
-branch='dev'
+branch='main'
 # 日期时间
 datevar=$(date +"%Y-%m-%d %H:%M:%S")
 # 颜色定义
@@ -96,11 +96,151 @@ slogo() {
     tput cnorm
 }
 
+#回首页
+backtomain(){
+    echo
+    _red '输入有误  回车返回首页'
+    waitinput
+    main
+}
+
+#重启脚本
+selfrestart(){
+    echo
+    _green '保持配置..'
+    sleep 0.5
+    _yellow '重启脚本..'
+    echo
+    sleep 1
+    exec s
+}
+
+#脚本设置
+selfsetting(){
+    
+    #移除脚本
+    removeself() {
+        rm -rf $installdir/core/*
+        rm -rf $installdir/config/*
+        rm -rf $installdir/module/*
+        rm -rf $installdir/version
+    }
+    
+    #卸载脚本
+    uninstallfun() {
+        read -ep "确认卸载 (y/n, 默认n): " delself
+        if [[ "$delself" != "y" ]]; then
+            _yellow "已取消卸载"
+            waitinput
+            return
+        fi
+        
+        removeself
+        # 写入日志
+        slog set install "$datevar  | 脚本卸载 | v$selfversion"
+        
+        read -ep "是否删除配置&日志 (y/n, 默认n): " delconf
+        if [[ "$delconf" == "y" ]]; then
+            rm -rf "$installdir" /bin/s
+            _green "已删除配置和日志"
+        else
+            _yellow "保留了配置和日志"
+        fi
+        
+        _blue '卸载完成'
+        echo
+        waitinput
+        kill -15 $$
+        
+    }
+    
+    # 升级脚本
+    updateself() {
+        [[ $branch == 'main' ]] && _yellow "升级脚本? v:$selfversion -> v:$latestversion"
+        waitinput
+        local tmpdir="$installdir/tmp"
+        mkdir -p "$tmpdir"
+        
+        _blue "尝试下载最新版脚本和版本信息..."
+        
+        local s_ok=false v_ok=false
+        
+        if download_file "s.sh" "$tmpdir/s.sh"; then
+            _green "s.sh 下载成功"
+            s_ok=true
+        else
+            _red "s.sh 下载失败"
+        fi
+        
+        if download_file "version" "$tmpdir/version"; then
+            _green "version 下载成功"
+            v_ok=true
+        else
+            _yellow "version 下载失败"
+        fi
+        
+        if $s_ok && $v_ok; then
+            _blue "验证通过，准备更新"
+            cp "$tmpdir/s.sh" "$installdir/s.sh"
+            cp "$tmpdir/version" "$installdir/version"
+            chmod +x "$installdir/s.sh"
+            
+            slog set install "$datevar  | 脚本升级"
+            _blue "卸载旧版本..."
+            removeself
+            slogo
+            exec "$installdir/s.sh"
+        else
+            _red "升级条件不满足，未执行更新"
+        fi
+        
+        rm -rf "$tmpdir"
+    }
+    
+    updateselfbeta(){
+        branch='dev'
+        updateself
+    }
+    
+    catselfrunlog(){
+        echo
+        slog get runscript
+        echo
+    }
+    
+    openexceptionlog(){
+        echo 'open' >$installdir/config/exception
+        selfrestart
+    }
+    closeexceptionlog(){
+        echo 'close' >$installdir/config/exception
+        selfrestart
+    }
+
+    
+    menuname='脚本设置'
+    echo "selfsetting" >$installdir/config/lastfun
+    
+    options=("查看脚本执行日志" catselfrunlog "打开详细执行日志" openexceptionlog "关闭详细执行日志" closeexceptionlog "升级脚本" updateself "升级脚本beta版" updateselfbeta "卸载脚本" uninstallfun)
+    menu "${options[@]}"
+}
+
 #菜单渲染
 menu() {
+    if [ $is_param_mode -eq 1 ]; then
+        return
+    fi
+    clear
+    
+    echo
+    # 检查是否有新版本
+    if [ -n "$latestversion" ] && [ "$selfversion" != "$latestversion" ]; then
+        _yellow "发现新版本 $latestversion ！"
+        echo
+    fi
+
     # 渲染菜单前 检查是否有beforeMenu函数，执行
     declare -F beforeMenu >/dev/null 2>&1 && beforeMenu
-    
     
     local options=("$@")
     local num_options=${#options[@]}
@@ -117,39 +257,48 @@ menu() {
         echo -e "\n"
     done
     
-    _blue "0: 首页 b: 返回 q: 退出"
     
+    _blue "0: 首页 b: 返回 q: 退出 s:脚本设置"
     echo
     read -ep "请输入命令号(0-$((num_options / 2))): " number
     
-    if [[ $number -ge 1 && $number -le $((num_options / 2)) ]]; then
-        #找到函数名索引
-        local action_index=$((2 * (number - 1) + 1))
-        #函数名赋值
-        parentfun=${options[action_index]}
-        #记录运行日志
-        declare -F slog >/dev/null 2>&1 && slog set runscript "$datevar | $menuname | ${options[action_index]} (${options[action_index - 1]})"
-        
-        #函数执行
-        ${options[action_index]}
-        nextrun
-        elif [[ $number == 0 ]]; then
-        main
-        elif [[ $number == 'b' ]]; then
-        if [[ -n "${FUNCNAME[3]}" ]]; then
-            ${FUNCNAME[3]}
-        else
+    case "$number" in
+        [1-9]|[1-9][0-9]*)
+            if [[ $number -ge 1 && $number -le $((num_options / 2)) ]]; then
+                #找到函数名索引
+                local action_index=$((2 * (number - 1) + 1))
+                #函数名赋值
+                parentfun=${options[action_index]}
+                #记录运行日志
+                declare -F slog >/dev/null 2>&1 && slog set runscript "$datevar | $menuname | ${options[action_index]} (${options[action_index - 1]})"
+                #函数执行
+                ${options[action_index]}
+                nextrun
+            else
+                backtomain
+            fi
+        ;;
+        0)
             main
-        fi
-        elif [[ $number == 'q' ]]; then
-        echo
-        kill -15 $$
-    else
-        echo
-        _red '输入有误  回车返回首页'
-        waitinput
-        main
-    fi
+        ;;
+        b)
+            if [[ -n "${FUNCNAME[3]}" ]]; then
+                ${FUNCNAME[3]}
+            else
+                main
+            fi
+        ;;
+        q)
+            echo
+            kill -15 $$
+        ;;
+        s)
+            selfsetting
+        ;;
+        *)
+            backtomain
+        ;;
+    esac
 }
 
 # 进度条
@@ -241,39 +390,12 @@ _exists() {
     return ${rt}
 }
 
-#移除脚本
-removeself() {
-    rm -rf $installdir/core/*
-    rm -rf $installdir/config/*
-    rm -rf $installdir/module/*
-    rm -rf $installdir/version
-}
-
-#卸载脚本
-uninstallfun() {
-    _red '卸载核心和所有模块？'
-    waitinput
-    
-    removeself
-    #写入日志
-    slog set install "$datevar  | 脚本卸载 | v$selfversion"
-    read -ep "是否删除配置&日志 (默认n): " yorn
-    if [[ "$yorn" = "y" ]]; then
-        rm -rf $installdir
-        rm -rf /bin/s
-    fi
-    _blue '卸载完成'
-    echo
-    kill -15 $$
-    
-}
-
 # 通用下载函数：从镜像列表中依次尝试下载文件
 download_file() {
     local filename="$1"   # 要下载的文件名（带路径，如 module/status.sh）
     local output="$2"     # 输出路径（完整路径，不只是目录）
     local timeout=3
-
+    
     for base in "${proxylinks[@]}"; do
         wget -q --timeout="$timeout" "${base}/sshpc/s/$branch/$filename" -O "$output"
         if [[ -s "$output" ]]; then
@@ -282,7 +404,7 @@ download_file() {
             rm -f "$output"
         fi
     done
-
+    
     return 1
 }
 
@@ -290,63 +412,22 @@ download_file() {
 download_file_bg() {
     local filename="$1"
     local output="$installdir/$filename"
-
+    
     (
         if ! download_file "$filename" "$output"; then
-        _red "文件 $filename 下载失败！"
-        exit 1
+            _red "文件 $filename 下载失败！"
+            exit 1
         fi
     ) &
-}
-
-# 升级自身脚本函数
-updateself() {
-    local tmpdir="$installdir/tmp"
-    mkdir -p "$tmpdir"
-
-    _blue "尝试下载最新版脚本和版本信息..."
-
-    local s_ok=false v_ok=false
-
-    if download_file "s.sh" "$tmpdir/s.sh"; then
-        _green "s.sh 下载成功"
-        s_ok=true
-    else
-        _red "s.sh 下载失败"
-    fi
-
-    if download_file "version" "$tmpdir/version"; then
-        _green "version 下载成功"
-        v_ok=true
-    else
-        _yellow "version 下载失败"
-    fi
-
-    if $s_ok && $v_ok; then
-        _blue "验证通过，准备更新"
-        cp "$tmpdir/s.sh" "$installdir/s.sh"
-        cp "$tmpdir/version" "$installdir/version"
-        chmod +x "$installdir/s.sh"
-
-        slog set install "$datevar  | 脚本升级"
-        _blue "卸载旧版本..."
-        removeself
-
-        exec "$installdir/s.sh"
-    else
-        _red "升级条件不满足，未执行更新"
-    fi
-
-    rm -rf "$tmpdir"
 }
 
 # 版本检测函数
 selfversionfun() {
     selfversion=$(cat "$installdir/version")
-
+    
     latestversion_file="$installdir/config/latestversion"
     [[ -f "$latestversion_file" ]] || touch "$latestversion_file"
-
+    
     getlatestversion() {
         (
             local tmpfile="$latestversion_file.tmp"
@@ -357,109 +438,15 @@ selfversionfun() {
             fi
         ) &
     }
-
+    
     local current_time=$(date +%s)
     local file_mod_time=$(stat -c %Y "$latestversion_file" 2>/dev/null || echo 0)
     local time_diff=$((current_time - file_mod_time))
-
+    
     # 如果文件超过1小时没更新，就后台拉取一次
     [[ $time_diff -ge 3600 ]] && getlatestversion
-
+    
     latestversion=$(cat "$latestversion_file" 2>/dev/null)
-}
-
-# 加载文件
-loadfilefun() {
-    if [ ! -d "$installdir" ]; then
-        slogo
-        _blue "欢迎使用"
-        mkdir -p "$installdir" "$installdir/log" "$installdir/config" "$installdir/module"
-        cp -f "$(pwd)/s.sh" "$installdir/s.sh"
-        ln -s "$installdir/s.sh" /bin/s
-    fi
-
-    # 初始化下载地址列表
-    local original_url="http://raw.githubusercontent.com"
-    proxylinks=("$original_url")
-    for host in "${proxyhost[@]}"; do
-        proxylinks+=("${host}/${original_url}")
-    done
-
-    # 需要下载的文件
-    shfiles=(
-        'version'
-        'module/status.sh'
-        'module/software.sh'
-        'module/network.sh'
-        'module/system.sh'
-        'module/docker.sh'
-        'module/ordertools.sh'
-    )
-
-    # 并行下载缺失文件
-    pids=()
-    for shfile in "${shfiles[@]}"; do
-        if [[ ! -s "$installdir/$shfile" ]]; then
-            download_file_bg "$shfile" # 如果文件不存在或为空，调用 filecheck
-            pids+=($!)          # 收集子进程 PID
-        fi
-    done
-
-    if [[ ${#pids[@]} -gt 0 ]]; then
-        echo
-        _yellow '文件下载中'
-        loadingprogressbar "${pids[@]}" # 显示下载进度
-        wait # 等待所有子进程完成
-    fi
-
-    # 加载脚本
-    for shfile in "${shfiles[@]}"; do
-        [[ $shfile == *.sh ]] && source "$installdir/$shfile"
-    done
-}
-
-#终止和日志函数
-exceptionfun(){
-    #异常终止函数
-    _exit() {
-        if [ -e "./speedtest-cli/speedtest" ]; then
-            rm -rf ./speedtest-cli
-        fi
-        exit 1
-    }
-    #异常终止执行函数
-    trap _exit INT QUIT TERM
-    
-    LOGFILE="${installdir}/log/runscript.log"
-    
-    # 把 xtrace 输出到日志文件
-    exec 19>>"$LOGFILE"
-    set -T   # 子 shell / 函数也触发 DEBUG
-    
-    # 白名单数组（不写日志的外部命令）
-    CMD_WHITELIST=("sleep" "clear" "tr" "wc" "cat" "awk" "sort" "sed")
-    
-    # 判断是否在白名单里
-    in_whitelist() {
-        local c="$1"
-        for w in "${CMD_WHITELIST[@]}"; do
-            if [[ "$c" == "$w" ]]; then
-                return 0
-            fi
-        done
-        return 1
-    }
-    
-    # 捕获外部程序命令
-    BASH_COMMAND_LOGGER() {
-        local cmd="${BASH_COMMAND%% *}"   # 取第一个单词
-        # 仅记录外部程序 & 不在白名单
-        if [ "$(type -t "$cmd" 2>/dev/null)" = "file" ] && ! in_whitelist "$cmd"; then
-            echo "$(date '+%F %T') [$$] $BASH_COMMAND" >&19
-        fi
-    }
-    trap BASH_COMMAND_LOGGER DEBUG
-    
 }
 
 #s日志读写
@@ -483,29 +470,126 @@ slog() {
     esac
     
 }
-
-#菜单顶部内容钩子函数
+#菜单顶部内容
 beforeMenu(){
-    if [ $is_param_mode -eq 1 ]; then
-        return
-    fi
-    clear
-    
-    echo
-    # 检查是否有新版本
-    if [ -n "$latestversion" ] && [ "$selfversion" != "$latestversion" ]; then
-        _yellow "发现新版本！v: $latestversion"
-        echo
-    fi
     _blue "> ----- S脚本 当前目录: [ $(pwd) ] -------- < v: $selfversion"
     echo
     _yellow "当前菜单: $menuname "
     echo
 }
+#主函数
+main() {
+    menuname='首页'
+    echo "main" >$installdir/config/lastfun
+    
+    options=("状态" statusfun "软件管理" softwarefun "网络管理" networkfun "系统管理" systemfun "docker管理" dockerfun "其他工具" ordertoolsfun)
+    menu "${options[@]}"
+}
 
-#参数检测
-paramdetectionfun(){
-    # 处理命令行参数（直接执行函数）
+# 加载文件
+loadfilefun() {
+    if [ ! -d "$installdir" ]; then
+        slogo
+        _blue "欢迎使用"
+        mkdir -p "$installdir" "$installdir/log" "$installdir/config" "$installdir/module"
+        cp -f "$(pwd)/s.sh" "$installdir/s.sh"
+        ln -s "$installdir/s.sh" /bin/s
+        #默认记录详细执行日志
+        echo 'open' >$installdir/config/exception
+    fi
+    
+    # 初始化下载地址列表
+    local original_url="http://raw.githubusercontent.com"
+    proxylinks=("$original_url")
+    for host in "${proxyhost[@]}"; do
+        proxylinks+=("${host}/${original_url}")
+    done
+    
+    # 需要下载的文件
+    shfiles=(
+        'version'
+        'module/status.sh'
+        'module/software.sh'
+        'module/network.sh'
+        'module/system.sh'
+        'module/docker.sh'
+        'module/ordertools.sh'
+    )
+    
+    # 并行下载缺失文件
+    pids=()
+    for shfile in "${shfiles[@]}"; do
+        if [[ ! -s "$installdir/$shfile" ]]; then
+            download_file_bg "$shfile" # 如果文件不存在或为空，调用 filecheck
+            pids+=($!)          # 收集子进程 PID
+        fi
+    done
+    
+    if [[ ${#pids[@]} -gt 0 ]]; then
+        echo
+        _yellow '文件下载中'
+        loadingprogressbar "${pids[@]}" # 显示下载进度
+        wait # 等待所有子进程完成
+    fi
+    
+    # 加载脚本
+    for shfile in "${shfiles[@]}"; do
+        [[ $shfile == *.sh ]] && source "$installdir/$shfile"
+    done
+}
+
+#终止和日志函数
+exceptionfun(){
+    #异常终止函数
+    _exit() {
+        if [ -e "./speedtest-cli/speedtest" ]; then
+            rm -rf ./speedtest-cli
+        fi
+        [[ -d "$installdir/tmp" ]] && rm -rf $installdir/tmp
+        exit 1
+    }
+    #异常终止执行函数
+    trap _exit INT QUIT TERM
+    
+    # 检查exceptionlogvar 是否开启(判断 $installdir/config/exception 文件是否有内容 'open' 则开启)
+    if [[ -f "$installdir/config/exception" ]] && grep -q '^open$' "$installdir/config/exception"; then
+        LOGFILE="${installdir}/log/runscript.log"
+        
+        # 把 xtrace 输出到日志文件
+        exec 19>>"$LOGFILE"
+        set -T   # 子 shell / 函数也触发 DEBUG
+        
+        # 白名单数组（不写日志的外部命令）
+        CMD_WHITELIST=("sleep" "clear" "tr" "wc" "cat" "awk" "sort" "sed")
+        
+        # 判断是否在白名单里
+        in_whitelist() {
+            local c="$1"
+            for w in "${CMD_WHITELIST[@]}"; do
+                if [[ "$c" == "$w" ]]; then
+                    return 0
+                fi
+            done
+            return 1
+        }
+        
+        # 捕获外部程序命令
+        BASH_COMMAND_LOGGER() {
+            local cmd="${BASH_COMMAND%% *}"   # 取第一个单词
+            # 仅记录外部程序 & 不在白名单
+            if [ "$(type -t "$cmd" 2>/dev/null)" = "file" ] && ! in_whitelist "$cmd"; then
+                echo "$(date '+%F %T') [$$] $BASH_COMMAND" >&19
+            fi
+        }
+        trap BASH_COMMAND_LOGGER DEBUG
+    fi
+    
+}
+
+#脚本运行
+selfrun(){
+
+    # 检测处理命令行参数（直接执行函数）
     is_param_mode=0  # 新增：标记是否为参数模式
     if [ $# -gt 0 ]; then
         is_param_mode=1  # 有参数时进入参数模式
@@ -521,27 +605,20 @@ paramdetectionfun(){
         done
         exit 0
     fi
-}
-
-#主函数
-main() {
-    menuname='首页'
-    echo "main" >$installdir/config/lastfun
     
-    options=("状态" statusfun "软件管理" softwarefun "网络管理" networkfun "系统管理" systemfun "docker管理" dockerfun "其他工具" ordertoolsfun "升级脚本" updateself "卸载脚本" uninstallfun)
-    menu "${options[@]}"
+    #交互运行,判断配置文件是否存在或是否是真实函数
+    if [ -z "$(cat $installdir/config/lastfun)" ]; then
+        main
+    else
+        $(cat $installdir/config/lastfun)
+    fi
 }
 
+#脚本运行
 loadfilefun
 exceptionfun
 selfversionfun
-paramdetectionfun
+selfrun
 
 
-#判断配置文件是否存在或是否是真实函数
 
-if [ -z "$(cat $installdir/config/lastfun)" ]; then
-    main
-else
-    $(cat $installdir/config/lastfun)
-fi

@@ -289,15 +289,10 @@ statusfun() {
         echo
     }
 
-    catselfrunlog(){
-        echo
-        slog get runscript
-        echo
-    }
 
     menuname='首页/状态'
     echo "statusfun" >$installdir/config/lastfun
-    options=("系统信息" sysinfo "磁盘信息" diskinfo "网络信息" netinfo "实时网速" Realtimenetworkspeedfun "查看脚本执行日志" catselfrunlog)
+    options=("系统信息" sysinfo "磁盘信息" diskinfo "网络信息" netinfo "实时网速" Realtimenetworkspeedfun )
 
     menu "${options[@]}"
 }
