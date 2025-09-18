@@ -189,7 +189,7 @@ selfsetting(){
             slog set install "$datevar  | 脚本升级"
             _blue "卸载旧版本..."
             removeself
-            slogo
+            loadfilefun
             exec "$installdir/s.sh"
         else
             _red "升级条件不满足，未执行更新"
