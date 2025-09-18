@@ -44,6 +44,7 @@ slogo() {
     
     _green '# 交互式shell脚本工具'
     _green '# Author:SSHPC <https://github.com/sshpc>'
+    sleep 0.5
     echo
     
     # 定义要打印的内容
@@ -199,6 +200,7 @@ selfsetting(){
     
     updateselfbeta(){
         branch='dev'
+        _yellow "升级脚本Beta版?"
         updateself
     }
     
