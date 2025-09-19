@@ -129,6 +129,12 @@ s dockerfun dockerimageimportexport  dockerimageexportuseall
 s dockerfun dockerimageimportexport  dockerimageimportall
 
 
+### 安装beta版
+```sh
+wget -N  http://raw.githubusercontent.com/sshpc/s/dev/s.sh && chmod +x s.sh &&  bash s.sh
+```
+
+
 
 
 
