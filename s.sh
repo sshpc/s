@@ -2,7 +2,9 @@
 export LANG=en_US.UTF-8
 # 配置区
 # 安装目录 (root登录 /root/s)
-installdir=$HOME/s
+installdir="$HOME/s"
+
+
 # 配置文件下载代理主机列表（github加速）
 proxyhost=(
     "https://gh.ddlc.top"
@@ -218,12 +220,198 @@ selfsetting(){
         echo 'close' >$installdir/config/exception
         selfrestart
     }
-
+    
+    
+    
     
     menuname='脚本设置'
     echo "selfsetting" >$installdir/config/lastfun
     
-    options=("查看脚本执行日志" catselfrunlog "打开详细执行日志" openexceptionlog "关闭详细执行日志" closeexceptionlog "升级脚本" updateself "升级脚本beta版" updateselfbeta "卸载脚本" uninstallfun)
+    options=("查看脚本执行日志" catselfrunlog "模块管理" module_manager "打开详细执行日志" openexceptionlog "关闭详细执行日志" closeexceptionlog "升级脚本" updateself "升级脚本beta版" updateselfbeta "卸载脚本" uninstallfun)
+    menu "${options[@]}"
+}
+
+#解析ini
+get_ini_value() {
+    local section="$1"
+    local key="$2"
+    local file="$3"
+
+
+    # 使用sed先处理文件：移除Windows换行符^M，再用awk解析
+    result=$(sed 's/\r$//' "$file" | awk -v target_section="$section" -v target_key="$key" '
+        BEGIN {
+            in_target = 0
+            found = 0
+        }
+        
+        # 清除首尾空白
+        { 
+            gsub(/^[ \t]+|[ \t]+$/, "", $0) 
+        }
+        
+        # 跳过空行
+        $0 == "" { next }
+        
+        # 匹配section行
+        /^\[.*\]$/ {
+            current_section = substr($0, 2, length($0)-2)
+            gsub(/^[ \t]+|[ \t]+$/, "", current_section)
+            in_target = (current_section == target_section)
+            if (in_target) {
+                #print "调试: 找到目标section [" current_section "]" > "/dev/stderr"
+            }
+            next
+        }
+        
+        # 在目标section中查找key
+        in_target {
+            if ($0 ~ "^[ \t]*" target_key "[ \t]*=") {
+                # 提取值
+                value = substr($0, index($0, "=") + 1)
+                gsub(/^[ \t]+|[ \t]+$/, "", value)
+                print value
+                found = 1
+                exit 0
+            }
+        }
+        
+        END {
+            if (!found) exit 1
+        }
+    ')
+
+    local exit_code=$?
+    if [ $exit_code -ne 0 ]; then
+        echo "Error: 未找到 key '$key' 在 section '$section' 中" >&2
+        return $exit_code
+    fi
+
+    echo "$result"
+}
+
+
+# 列出 modules.conf 中所有 section (模块 id)
+list_all_modules_from_conf() {
+    local file="$1"
+    awk '/^\[.*\]/{gsub(/\[|\]/,"",$0); print $0}' "$file"
+}
+
+
+
+# 打印模块清单：全部以及已安装
+modules_list() {
+    local conf="$installdir/modules.conf"
+    if [[ ! -f "$conf" ]]; then
+        _yellow "未找到模块清单 ($conf)"
+        return
+    fi
+    echo
+    _blue "全部模块："
+    while read -r m; do
+        # 清除回车符、换行符等控制字符
+        m=$(echo "$m" | tr -d '\r\n\t')
+        [[ -z "$m" ]] && continue
+        echo $m
+        local func=$(get_ini_value "$m" "name" "$conf")
+        local desc=$(get_ini_value "$m" "desc" "$conf")
+        local req=$(get_ini_value "$m" "required" "$conf")
+        printf "  - %s (%s) [required=%s]\n" "$m" "${desc:-no-desc}" "${req:-no}"
+    done < <(list_all_modules_from_conf "$conf")
+    
+    echo
+    _blue "已安装模块："
+    for f in "$installdir/module"/*.sh; do
+        [[ ! -f "$f" ]] && continue
+        bn=$(basename "$f" .sh)
+        printf "  - %s\n" "$bn"
+    done
+}
+
+
+# 下载单个模块（module name，不带 .sh）
+download_module() {
+    local mod="$1"
+    local target_dir="$installdir/module"
+    mkdir -p "$target_dir"
+    local filename="module/${mod}.sh"
+    local outfile="$target_dir/${mod}.sh"
+    
+    if [[ -f "$outfile" ]]; then
+        _yellow "模块 $mod 已存在，跳过下载"
+        return 0
+    fi
+    
+    if download_file "$filename" "$outfile"; then
+        _green "模块 $mod 下载成功"
+        return 0
+    else
+        _red "模块 $mod 下载失败"
+        return 1
+    fi
+}
+
+# 安装模块：all / default / 单个
+modules_install() {
+    local conf="$installdir/modules.conf"
+    [[ -f "$conf" ]] || { _red "缺少 modules.conf，无法安装模块"; return 1; }
+    
+    echo
+    read -ep "全部安装按回车, 仅安装默认(required=yes)请输入 n : " choice
+    if [[ "$choice" == "n" ]]; then
+        _blue "仅安装 required=yes 的模块"
+        while read -r m; do
+            # 清除回车符、换行符等控制字符
+            m=$(echo "$m" | tr -d '\r\n\t')
+            [[ -z "$m" ]] && continue
+            local req=$(get_ini_value "$m" "required" "$conf")
+            if [[ "$req" == "yes" ]]; then
+                download_module "$m"
+            fi
+        done < <(list_all_modules_from_conf "$conf")
+    else
+        _blue "安装全部模块"
+        pids=()
+        for m in $(list_all_modules_from_conf "$conf"); do
+            # 清除回车符、换行符等控制字符
+            m=$(echo "$m" | tr -d '\r\n\t')
+            download_file_bg "module/${m}.sh"
+            pids+=($!)
+        done
+        if [[ ${#pids[@]} -gt 0 ]]; then
+            _yellow "模块下载中"
+            loadingprogressbar "${pids[@]}"
+            wait
+        fi
+        
+    fi
+}
+
+# 卸载模块：all / single
+modules_uninstall() {
+    echo
+    read -ep "卸载全部模块请输入 a , 卸载单个请输入模块名 (或回车取消): " choice
+    if [[ "$choice" == "a" ]]; then
+        _yellow "卸载全部模块..."
+        rm -f "$installdir/module"/*.sh
+        _green "已卸载全部模块"
+        elif [[ -n "$choice" ]]; then
+        if [[ -f "$installdir/module/${choice}.sh" ]]; then
+            rm -f "$installdir/module/${choice}.sh"
+            _green "模块 $choice 已卸载"
+        else
+            _red "模块 $choice 未安装"
+        fi
+    else
+        _yellow "已取消"
+    fi
+}
+
+# 模块管理菜单（加入到脚本设置中）
+module_manager() {
+    menuname='模块管理'
+    echo "selfsetting" >$installdir/config/lastfun
+    options=("查看模块列表" modules_list "安装模块" modules_install "卸载模块" modules_uninstall)
     menu "${options[@]}"
 }
 
@@ -240,7 +428,7 @@ menu() {
         _yellow "发现新版本 $latestversion ！"
         echo
     fi
-
+    
     # 渲染菜单前 检查是否有beforeMenu函数，执行
     declare -F beforeMenu >/dev/null 2>&1 && beforeMenu
     
@@ -484,7 +672,22 @@ main() {
     menuname='首页'
     echo "main" >$installdir/config/lastfun
     
-    options=("状态" statusfun "软件管理" softwarefun "网络管理" networkfun "系统管理" systemfun "docker管理" dockerfun "其他工具" ordertoolsfun)
+    local conf="$installdir/modules.conf"
+    local options=()
+
+    for m in $(list_all_modules_from_conf "$conf"); do
+        # 清除回车符、换行符等控制字符
+        m=$(echo "$m" | tr -d '\r\n\t')
+        if  [[ -s "$installdir/module/$m.sh" ]] ; then
+            # desc 用作显示文字， name 是要执行的函数
+            local desc=$(get_ini_value "$m" "desc" "$conf")
+            local func=$(get_ini_value "$m" "name" "$conf")
+            [[ -z "$desc" ]] && desc="$m"
+            [[ -z "$func" ]] && func="$m"
+            options+=("$desc" "$func")
+        fi
+    done
+    
     menu "${options[@]}"
 }
 
@@ -510,12 +713,7 @@ loadfilefun() {
     # 需要下载的文件
     shfiles=(
         'version'
-        'module/status.sh'
-        'module/software.sh'
-        'module/network.sh'
-        'module/system.sh'
-        'module/docker.sh'
-        'module/ordertools.sh'
+        'modules.conf'
     )
     
     # 并行下载缺失文件
@@ -534,9 +732,41 @@ loadfilefun() {
         wait # 等待所有子进程完成
     fi
     
-    # 加载脚本
-    for shfile in "${shfiles[@]}"; do
-        [[ $shfile == *.sh ]] && source "$installdir/$shfile"
+    # 如果是首次安装（module 目录为空或没有模块），让用户选择全部安装或仅默认安装
+    if [[ -z "$(ls -A $installdir/module 2>/dev/null)" ]] && [[ -s "$installdir/modules.conf" ]]; then
+        echo
+        _blue "检测到首次安装：模块目录为空"
+        read -ep "全部安装按回车, 仅安装默认(required=yes)请输入 n : " choice
+        if [[ "$choice" == "n" ]]; then
+            _blue "仅安装 required=yes 的模块"
+            for m in $(list_all_modules_from_conf "$installdir/modules.conf"); do
+                # 清除回车符、换行符等控制字符
+                m=$(echo "$m" | tr -d '\r\n\t')
+                req=$(get_ini_value "$m" "required" "$installdir/modules.conf")
+                if [[ "$req" == "yes" ]]; then
+                    download_module "$m"
+                fi
+            done
+        else
+            _blue "安装全部模块（并行下载）"
+            pids=()
+            for m in $(list_all_modules_from_conf "$installdir/modules.conf"); do
+                # 清除回车符、换行符等控制字符
+                m=$(echo "$m" | tr -d '\r\n\t')
+                download_file_bg "module/${m}.sh"
+                pids+=($!)
+            done
+            if [[ ${#pids[@]} -gt 0 ]]; then
+                loadingprogressbar "${pids[@]}"
+                wait
+            fi
+            
+        fi
+    fi
+    
+    # 加载 modules 目录下所有模块脚本（存在的才加载）
+    for mfile in "$installdir/module"/*.sh; do
+        [[ -f "$mfile" ]] && source "$mfile"
     done
 }
 
@@ -590,7 +820,7 @@ exceptionfun(){
 
 #脚本运行
 selfrun(){
-
+    
     # 检测处理命令行参数（直接执行函数）
     is_param_mode=0  # 新增：标记是否为参数模式
     if [ $# -gt 0 ]; then
@@ -619,7 +849,9 @@ selfrun(){
 #脚本运行
 loadfilefun
 exceptionfun
+
 selfversionfun
+
 selfrun
 
 
