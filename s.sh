@@ -200,11 +200,6 @@ selfsetting(){
         rm -rf "$tmpdir"
     }
     
-    updateselfbeta(){
-        branch='dev'
-        _yellow "升级脚本Beta版?"
-        updateself
-    }
     
     catselfrunlog(){
         echo
@@ -220,14 +215,22 @@ selfsetting(){
         echo 'close' >$installdir/config/exception
         selfrestart
     }
-    
+    switchoverbeta(){
+        echo 'dev' >$installdir/config/branch
+        selfrestart
+    }
+
+    switchovermain(){
+        echo 'main' >$installdir/config/branch
+        selfrestart
+    }
     
     
     
     menuname='脚本设置'
     echo "selfsetting" >$installdir/config/lastfun
     
-    options=("查看脚本执行日志" catselfrunlog "模块管理" module_manager "打开详细执行日志" openexceptionlog "关闭详细执行日志" closeexceptionlog "升级脚本" updateself "升级脚本beta版" updateselfbeta "卸载脚本" uninstallfun)
+    options=("查看脚本执行日志" catselfrunlog "模块管理" module_manager "打开详细执行日志" openexceptionlog "关闭详细执行日志" closeexceptionlog "升级脚本" updateself "切换成beta版" switchoverbeta "切换成正式版" switchovermain "卸载脚本" uninstallfun)
     menu "${options[@]}"
 }
 
@@ -701,6 +704,13 @@ loadfilefun() {
         ln -s "$installdir/s.sh" /bin/s
         #默认记录详细执行日志
         echo 'open' >$installdir/config/exception
+        #默认正式版
+        echo 'main' >$installdir/config/branch
+    fi
+
+    #检查版本
+    if [[ -f "$installdir/config/branch" ]] && grep -q '^dev$' "$installdir/config/branch"; then
+        branch='dev'
     fi
     
     # 初始化下载地址列表
@@ -736,6 +746,7 @@ loadfilefun() {
     if [[ -z "$(ls -A $installdir/module 2>/dev/null)" ]] && [[ -s "$installdir/modules.conf" ]]; then
         echo
         _blue "检测到首次安装：模块目录为空"
+        echo
         read -ep "全部安装按回车, 仅安装默认(required=yes)请输入 n : " choice
         if [[ "$choice" == "n" ]]; then
             _blue "仅安装 required=yes 的模块"
@@ -749,6 +760,7 @@ loadfilefun() {
             done
         else
             _blue "安装全部模块（并行下载）"
+            echo
             pids=()
             for m in $(list_all_modules_from_conf "$installdir/modules.conf"); do
                 # 清除回车符、换行符等控制字符
