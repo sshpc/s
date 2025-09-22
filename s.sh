@@ -17,7 +17,7 @@ proxyhost=(
 # 默认主页
 menuname='主页'
 #分支(main 正式版 dev开发版)
-branch='main'
+branch='dev'
 # 日期时间
 datevar=$(date +"%Y-%m-%d %H:%M:%S")
 # 颜色定义
@@ -219,7 +219,7 @@ selfsetting(){
         echo 'dev' >$installdir/config/branch
         selfrestart
     }
-
+    
     switchovermain(){
         echo 'main' >$installdir/config/branch
         selfrestart
@@ -239,23 +239,23 @@ get_ini_value() {
     local section="$1"
     local key="$2"
     local file="$3"
-
-
+    
+    
     # 使用sed先处理文件：移除Windows换行符^M，再用awk解析
     result=$(sed 's/\r$//' "$file" | awk -v target_section="$section" -v target_key="$key" '
         BEGIN {
             in_target = 0
             found = 0
         }
-        
+
         # 清除首尾空白
-        { 
-            gsub(/^[ \t]+|[ \t]+$/, "", $0) 
+        {
+            gsub(/^[ \t]+|[ \t]+$/, "", $0)
         }
-        
+
         # 跳过空行
         $0 == "" { next }
-        
+
         # 匹配section行
         /^\[.*\]$/ {
             current_section = substr($0, 2, length($0)-2)
@@ -266,7 +266,7 @@ get_ini_value() {
             }
             next
         }
-        
+
         # 在目标section中查找key
         in_target {
             if ($0 ~ "^[ \t]*" target_key "[ \t]*=") {
@@ -278,18 +278,18 @@ get_ini_value() {
                 exit 0
             }
         }
-        
+
         END {
             if (!found) exit 1
         }
     ')
-
+    
     local exit_code=$?
     if [ $exit_code -ne 0 ]; then
         echo "Error: 未找到 key '$key' 在 section '$section' 中" >&2
         return $exit_code
     fi
-
+    
     echo "$result"
 }
 
@@ -677,7 +677,7 @@ main() {
     
     local conf="$installdir/modules.conf"
     local options=()
-
+    
     for m in $(list_all_modules_from_conf "$conf"); do
         # 清除回车符、换行符等控制字符
         m=$(echo "$m" | tr -d '\r\n\t')
@@ -690,12 +690,15 @@ main() {
             options+=("$desc" "$func")
         fi
     done
+    if [ ${#my_array[@]} -eq 0 ]; then
+        options+=("模块为空,进入模块管理" module_manager)
+    fi
     
     menu "${options[@]}"
 }
 
-# 加载文件
-loadfilefun() {
+#脚本初始化
+selfinitfun(){
     if [ ! -d "$installdir" ]; then
         slogo
         _blue "欢迎使用"
@@ -704,23 +707,25 @@ loadfilefun() {
         ln -s "$installdir/s.sh" /bin/s
         #默认记录详细执行日志
         echo 'open' >$installdir/config/exception
-        #默认正式版
-        echo 'main' >$installdir/config/branch
     fi
-
+    
     #检查版本
     if [[ -f "$installdir/config/branch" ]] && grep -q '^dev$' "$installdir/config/branch"; then
         branch='dev'
     fi
-    
+
     # 初始化下载地址列表
     local original_url="http://raw.githubusercontent.com"
     proxylinks=("$original_url")
     for host in "${proxyhost[@]}"; do
         proxylinks+=("${host}/${original_url}")
     done
+}
+
+# 加载文件
+loadfilefun() {
     
-    # 需要下载的文件
+    # 核心文件
     shfiles=(
         'version'
         'modules.conf'
@@ -737,7 +742,7 @@ loadfilefun() {
     
     if [[ ${#pids[@]} -gt 0 ]]; then
         echo
-        _yellow '文件下载中'
+        _yellow '核心文件下载中'
         loadingprogressbar "${pids[@]}" # 显示下载进度
         wait # 等待所有子进程完成
     fi
@@ -745,7 +750,7 @@ loadfilefun() {
     # 如果是首次安装（module 目录为空或没有模块），让用户选择全部安装或仅默认安装
     if [[ -z "$(ls -A $installdir/module 2>/dev/null)" ]] && [[ -s "$installdir/modules.conf" ]]; then
         echo
-        _blue "检测到首次安装：模块目录为空"
+        _blue "检测到首次安装：无模块"
         echo
         read -ep "全部安装按回车, 仅安装默认(required=yes)请输入 n : " choice
         if [[ "$choice" == "n" ]]; then
@@ -859,6 +864,7 @@ selfrun(){
 }
 
 #脚本运行
+selfinitfun
 loadfilefun
 exceptionfun
 
