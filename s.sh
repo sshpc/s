@@ -665,7 +665,7 @@ slog() {
 }
 #菜单顶部内容
 beforeMenu(){
-    _blue "> ----- S脚本 当前目录: [ $(pwd) ] -------- < v: $selfversion"
+    _blue "> ---  当前目录: [ $(pwd) ] ---- < v:${branch}-$selfversion"
     echo
     _yellow "当前菜单: $menuname "
     echo
@@ -810,6 +810,12 @@ exceptionfun(){
         
         # 白名单数组（不写日志的外部命令）
         CMD_WHITELIST=("sleep" "clear" "tr" "wc" "cat" "awk" "sort" "sed")
+
+        # 用关联数组
+        declare -A WHITELIST_MAP
+        for w in "${CMD_WHITELIST[@]}"; do
+            WHITELIST_MAP["$w"]=1
+        done
         
         # 判断是否在白名单里
         in_whitelist() {
@@ -824,10 +830,21 @@ exceptionfun(){
         
         # 捕获外部程序命令
         BASH_COMMAND_LOGGER() {
-            local cmd="${BASH_COMMAND%% *}"   # 取第一个单词
+            # 避免递归触发日志函数
+            if [[ "$BASH_COMMAND" == *"BASH_COMMAND_LOGGER"* ]]; then
+                return 0
+            fi
+            local cmd="${BASH_COMMAND%% *}"
+
+            # 命令跳过
+            if [[ -n "${WHITELIST_MAP["$cmd_name"]}" ]]; then
+                return 0
+            fi
+
             # 仅记录外部程序 & 不在白名单
-            if [ "$(type -t "$cmd" 2>/dev/null)" = "file" ] && ! in_whitelist "$cmd"; then
-                echo "$(date '+%F %T') [$$] $BASH_COMMAND" >&19
+            if [ "$(type -t "$cmd" 2>/dev/null)" = "file" ]; then
+            local log_time=$(date '+%F %T')
+            printf "%s [%d] %s\n" "$log_time" "$$" "$BASH_COMMAND" >> "$LOGFILE"
             fi
         }
         trap BASH_COMMAND_LOGGER DEBUG
