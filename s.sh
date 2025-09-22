@@ -713,7 +713,7 @@ selfinitfun(){
     if [[ -f "$installdir/config/branch" ]] && grep -q '^dev$' "$installdir/config/branch"; then
         branch='dev'
     fi
-
+    
     # 初始化下载地址列表
     local original_url="http://raw.githubusercontent.com"
     proxylinks=("$original_url")
@@ -752,33 +752,43 @@ loadfilefun() {
         echo
         _blue "检测到首次安装：无模块"
         echo
-        read -ep "全部安装按回车, 仅安装默认(required=yes)请输入 n : " choice
-        if [[ "$choice" == "n" ]]; then
-            _blue "仅安装 required=yes 的模块"
-            for m in $(list_all_modules_from_conf "$installdir/modules.conf"); do
-                # 清除回车符、换行符等控制字符
-                m=$(echo "$m" | tr -d '\r\n\t')
-                req=$(get_ini_value "$m" "required" "$installdir/modules.conf")
-                if [[ "$req" == "yes" ]]; then
-                    download_module "$m"
+        read -ep "全部安装按回车, 仅安装默认(required=yes)请输入 n 跳过p : " choice
+        
+        case "$choice" in
+            n)
+                _blue "仅安装 required=yes 的模块"
+                for m in $(list_all_modules_from_conf "$installdir/modules.conf"); do
+                    # 清除回车符、换行符等控制字符
+                    m=$(echo "$m" | tr -d '\r\n\t')
+                    req=$(get_ini_value "$m" "required" "$installdir/modules.conf")
+                    if [[ "$req" == "yes" ]]; then
+                        download_module "$m"
+                    fi
+                done
+                selfrestart
+            ;;
+            p)
+                _yellow "跳过模块安装"
+            ;;
+            *)
+                _blue "安装全部模块（并行下载）"
+                echo
+                pids=()
+                for m in $(list_all_modules_from_conf "$installdir/modules.conf"); do
+                    # 清除回车符、换行符等控制字符
+                    m=$(echo "$m" | tr -d '\r\n\t')
+                    download_file_bg "module/${m}.sh"
+                    pids+=($!)
+                done
+                if [[ ${#pids[@]} -gt 0 ]]; then
+                    loadingprogressbar "${pids[@]}"
+                    wait
                 fi
-            done
-        else
-            _blue "安装全部模块（并行下载）"
-            echo
-            pids=()
-            for m in $(list_all_modules_from_conf "$installdir/modules.conf"); do
-                # 清除回车符、换行符等控制字符
-                m=$(echo "$m" | tr -d '\r\n\t')
-                download_file_bg "module/${m}.sh"
-                pids+=($!)
-            done
-            if [[ ${#pids[@]} -gt 0 ]]; then
-                loadingprogressbar "${pids[@]}"
-                wait
-            fi
-            
-        fi
+                selfrestart
+            ;;
+        esac
+        
+        
     fi
     
     # 加载 modules 目录下所有模块脚本（存在的才加载）
@@ -810,7 +820,7 @@ exceptionfun(){
         
         # 白名单数组（不写日志的外部命令）
         CMD_WHITELIST=("sleep" "clear" "tr" "wc" "cat" "awk" "sort" "sed")
-
+        
         # 用关联数组
         declare -A WHITELIST_MAP
         for w in "${CMD_WHITELIST[@]}"; do
@@ -835,16 +845,16 @@ exceptionfun(){
                 return 0
             fi
             local cmd="${BASH_COMMAND%% *}"
-
+            
             # 命令跳过
             if [[ -n "${WHITELIST_MAP["$cmd_name"]}" ]]; then
                 return 0
             fi
-
+            
             # 仅记录外部程序 & 不在白名单
             if [ "$(type -t "$cmd" 2>/dev/null)" = "file" ]; then
-            local log_time=$(date '+%F %T')
-            printf "%s [%d] %s\n" "$log_time" "$$" "$BASH_COMMAND" >> "$LOGFILE"
+                local log_time=$(date '+%F %T')
+                printf "%s [%d] %s\n" "$log_time" "$$" "$BASH_COMMAND" >> "$LOGFILE"
             fi
         }
         trap BASH_COMMAND_LOGGER DEBUG
