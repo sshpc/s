@@ -690,7 +690,7 @@ main() {
             options+=("$desc" "$func")
         fi
     done
-    if [ ${#my_array[@]} -eq 0 ]; then
+    if [ ${#options[@]} -eq 0 ]; then
         options+=("模块为空,进入模块管理" module_manager)
     fi
     
@@ -705,8 +705,8 @@ selfinitfun(){
         mkdir -p "$installdir" "$installdir/log" "$installdir/config" "$installdir/module"
         cp -f "$(pwd)/s.sh" "$installdir/s.sh"
         ln -s "$installdir/s.sh" /bin/s
-        #默认记录详细执行日志
-        echo 'open' >$installdir/config/exception
+        #默认关闭详细执行日志
+        echo 'close' >$installdir/config/exception
     fi
     
     #检查版本
