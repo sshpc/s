@@ -169,11 +169,7 @@ _exit() {
         rm -rf ./speedtest-cli
     fi
     #_red "\n exit. again run 's'\n"
-    #exit 1
-
-    local status=$1
-    echo "$(date '+%F %T') [$$] EXIT with status $status" >&19
-    exit $status
+    exit 1
 }
 #异常终止执行函数
 trap _exit INT QUIT TERM
