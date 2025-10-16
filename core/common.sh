@@ -77,10 +77,11 @@ uninstallfun() {
 download_with_mirrors() {
     local filename="$1"
     local output="$2/$filename"
+    local branch="$3"
     local timeout=3
 
     for base in "${proxylinks[@]}"; do
-        wget -q --timeout="$timeout" "${base}/sshpc/s/main/$filename" -O "$output"
+        wget -q --timeout="$timeout" "${base}/sshpc/s/$branch/$filename" -O "$output"
         if [[ -s "$output" ]]; then
             return 0
         else
@@ -93,6 +94,7 @@ download_with_mirrors() {
 
 # 升级自身脚本函数
 updateself() {
+
     local tmpdir="$installdir/tmp"
     mkdir -p "$tmpdir"
 
@@ -101,18 +103,41 @@ updateself() {
     local s_file_ok=false
     local v_file_ok=false
 
-    if download_with_mirrors "s.sh" "$tmpdir"; then
+
+    read -ep "是否下载dev版 (默认n): " yorndev
+    if [[ "$yorndev" = "y" ]]; then
+
+        if download_with_mirrors "s.sh" "$tmpdir" "main"; then
         _green "s.sh 下载成功"
         s_file_ok=true
     else
         _red "s.sh 下载失败"
     fi
 
-    if download_with_mirrors "version" "$tmpdir"; then
+    if download_with_mirrors "version" "$tmpdir" "main"; then
         _green "version 下载成功"
         v_file_ok=true
     else
         _yellow "version 下载失败"
+    fi
+
+    else  
+
+
+    if download_with_mirrors "s.sh" "$tmpdir" "main"; then
+        _green "s.sh 下载成功"
+        s_file_ok=true
+    else
+        _red "s.sh 下载失败"
+    fi
+
+    if download_with_mirrors "version" "$tmpdir" "main"; then
+        _green "version 下载成功"
+        v_file_ok=true
+    else
+        _yellow "version 下载失败"
+    fi
+
     fi
 
     if $s_file_ok && $v_file_ok; then
@@ -153,35 +178,6 @@ _exit() {
 #异常终止执行函数
 trap _exit INT QUIT TERM
 
-LOGFILE="${installdir}/log/runscript.log"
-
-# 把 xtrace 输出到日志文件
-exec 19>>"$LOGFILE"
-set -T   # 子 shell / 函数也触发 DEBUG
-
-# 白名单数组（不写日志的外部命令）
-CMD_WHITELIST=("sleep" "clear" "tr" "wc" "cat" "awk" "sort" "sed")
-
-# 判断是否在白名单里
-in_whitelist() {
-    local c="$1"
-    for w in "${CMD_WHITELIST[@]}"; do
-        if [[ "$c" == "$w" ]]; then
-            return 0
-        fi
-    done
-    return 1
-}
-
-# 捕获外部程序命令
-BASH_COMMAND_LOGGER() {
-    local cmd="${BASH_COMMAND%% *}"   # 取第一个单词
-    # 仅记录外部程序 & 不在白名单
-    if [ "$(type -t "$cmd" 2>/dev/null)" = "file" ] && ! in_whitelist "$cmd"; then
-        echo "$(date '+%F %T') [$$] $BASH_COMMAND" >&19
-    fi
-}
-trap BASH_COMMAND_LOGGER DEBUG
 
 #s日志读写
 slog() {
