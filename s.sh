@@ -4,7 +4,6 @@ export LANG=en_US.UTF-8
 # 安装目录 (root登录 /root/s)
 installdir="$HOME/s"
 
-
 # 配置文件下载代理主机列表（github加速）
 proxyhost=(
     "https://gh.ddlc.top"
@@ -107,131 +106,147 @@ backtomain(){
     main
 }
 
-#重启脚本
-selfrestart(){
-    echo
-    _green '保持配置..'
-    sleep 0.5
-    _yellow '重启脚本..'
-    echo
-    sleep 1
-    exec s
+# 进度条
+loadingprogressbar() {
+    local pids=("$@")
+    local total=${#pids[@]}
+    local completed=0
+    local delay=0.02
+    local spinstr='|/-\'
+    local spinindex=0
+    
+    tput civis # 隐藏光标
+    
+    while :; do
+        completed=0
+        for pid in "${pids[@]}"; do
+            if ! kill -0 "$pid" 2>/dev/null; then
+                ((completed++))
+            fi
+        done
+        
+        local percent=$((completed * 100 / total))
+        local bar_length=$((percent / 2)) # 50格进度条
+        local bar=$(printf '%-*s' "$bar_length" '' | tr ' ' '=')
+        local empty=$(printf '%-*s' "$((50-bar_length))" '' | tr ' ' '.')
+        
+        # 取旋转字符
+        local spinchar="${spinstr:$spinindex:1}"
+        spinindex=$(( (spinindex + 1) % 4 ))
+        printf "\r\033[0;31;36mloading[%c] [%-50s] %3d%% (%d/%d)\033[0m" "$spinchar" "$bar$empty" "$percent" "$completed" "$total"
+        
+        if [[ $completed -eq $total ]]; then
+            break
+        fi
+        
+        sleep "$delay"
+    done
+    
+    tput cnorm # 恢复光标
+    printf "\n"
 }
 
-#脚本设置
-selfsetting(){
+# 等待输入
+waitinput() {
+    echo
+    read -n1 -r -p "按任意键继续...(退出 Ctrl+C)"
+}
+
+#继续执行函数
+nextrun() {
+    waitinput
+    if [ -z "$(cat $installdir/config/lastfun)" ]; then
+        main
+    else
+        $(cat $installdir/config/lastfun)
+    fi
     
-    #移除脚本
-    removeself() {
-        rm -rf $installdir/core/*
-        rm -rf $installdir/config/*
-        rm -rf $installdir/module/*
-        rm -rf $installdir/version
-    }
+}
+
+# 加载动画
+loading() {
+    local pids=("$@")
+    local delay=0.1
+    local spinstr='|/-\'
+    tput civis # 隐藏光标
     
-    #卸载脚本
-    uninstallfun() {
-        read -ep "确认卸载 (y/n, 默认n): " delself
-        if [[ "$delself" != "y" ]]; then
-            _yellow "已取消卸载"
-            waitinput
-            return
-        fi
-        
-        removeself
-        # 写入日志
-        slog set install "$datevar  | 脚本卸载 | v$selfversion"
-        
-        read -ep "是否删除配置&日志 (y/n, 默认n): " delconf
-        if [[ "$delconf" == "y" ]]; then
-            rm -rf "$installdir" /bin/s
-            _green "已删除配置和日志"
-        else
-            _yellow "保留了配置和日志"
-        fi
-        
-        _blue '卸载完成'
-        echo
-        waitinput
-        kill -15 $$
-        
-    }
+    while :; do
+        local all_done=true
+        for pid in "${pids[@]}"; do
+            if kill -0 "$pid" 2>/dev/null; then
+                all_done=false
+                local temp=${spinstr#?}
+                printf "\r\033[0;31;36m[ %c ] loading ...\033[0m" "$spinstr"
+                local spinstr=$temp${spinstr%"$temp"}
+                sleep $delay
+            fi
+        done
+        [[ $all_done == true ]] && break
+    done
     
-    # 升级脚本
-    updateself() {
-        [[ $branch == 'main' ]] && _yellow "升级脚本? v:$selfversion -> v:$latestversion"
-        waitinput
-        local tmpdir="$installdir/tmp"
-        mkdir -p "$tmpdir"
-        
-        _blue "尝试下载最新版脚本和版本信息..."
-        
-        local s_ok=false v_ok=false
-        
-        if download_file "s.sh" "$tmpdir/s.sh"; then
-            _green "s.sh 下载成功"
-            s_ok=true
-        else
-            _red "s.sh 下载失败"
-        fi
-        
-        if download_file "version" "$tmpdir/version"; then
-            _green "version 下载成功"
-            v_ok=true
-        else
-            _yellow "version 下载失败"
-        fi
-        
-        if $s_ok && $v_ok; then
-            _blue "验证通过，准备更新"
-            cp "$tmpdir/s.sh" "$installdir/s.sh"
-            cp "$tmpdir/version" "$installdir/version"
-            chmod +x "$installdir/s.sh"
+    tput cnorm        # 恢复光标
+    printf "\r\033[K" # 清除行
+}
+
+#检测命令是否存在
+_exists() {
+    local cmd="$1"
+    which $cmd >/dev/null 2>&1
+    local rt=$?
+    return ${rt}
+}
+
+#s日志读写
+slog() {
+    local method=$1 #set or get
+    local file=$2
+    local info=$3
+    
+    case $method in
+        set) #写入#
+            echo $info >>${installdir}/log/$file.log
+        ;;
+        get) #读取#
+            tail -20 ${installdir}/log/$file.log
             
-            slog set install "$datevar  | 脚本升级"
-            _blue "卸载旧版本..."
-            removeself
-            loadfilefun
-            exec "$installdir/s.sh"
+        ;;
+        *)
+            echo 'log error'
+            
+        ;;
+    esac
+    
+}
+
+# 通用下载函数：从镜像列表中依次尝试下载文件
+download_file() {
+    local filename="$1"   # 要下载的文件名（带路径，如 module/status.sh）
+    local output="$2"     # 输出路径（完整路径，不只是目录）
+    local timeout=3
+    
+    for base in "${proxylinks[@]}"; do
+        wget -q --timeout="$timeout" "${base}/sshpc/s/$branch/$filename" -O "$output"
+        if [[ -s "$output" ]]; then
+            return 0
         else
-            _red "升级条件不满足，未执行更新"
+            rm -f "$output"
         fi
-        
-        rm -rf "$tmpdir"
-    }
+    done
     
+    return 1
+}
+
+# 下载文件（后台模式，用于并发下载）
+download_file_bg() {
+    local filename="$1"
+    local output="$installdir/$filename"
     
-    catselfrunlog(){
-        echo
-        slog get runscript
-        echo
-    }
-    
-    openexceptionlog(){
-        echo 'open' >$installdir/config/exception
-        selfrestart
-    }
-    closeexceptionlog(){
-        echo 'close' >$installdir/config/exception
-        selfrestart
-    }
-    switchoverbeta(){
-        echo 'dev' >$installdir/config/branch
-        selfrestart
-    }
-    
-    switchovermain(){
-        echo 'main' >$installdir/config/branch
-        selfrestart
-    }
-    
-    
-    
-    menuname='脚本设置'
-    echo "selfsetting" >$installdir/config/lastfun
-    
-    options=("查看脚本执行日志" catselfrunlog "模块管理" module_manager "打开详细执行日志" openexceptionlog "关闭详细执行日志" closeexceptionlog "升级脚本" updateself "切换成beta版" switchoverbeta "切换成正式版" switchovermain "卸载脚本" uninstallfun)
-    menu "${options[@]}"
+    (
+        if ! download_file "$filename" "$output"; then
+            _red "文件 $filename 下载失败！"
+            exit 1
+        fi
+    ) &
 }
 
 #解析ini
@@ -293,14 +308,11 @@ get_ini_value() {
     echo "$result"
 }
 
-
 # 列出 modules.conf 中所有 section (模块 id)
 list_all_modules_from_conf() {
     local file="$1"
     awk '/^\[.*\]/{gsub(/\[|\]/,"",$0); print $0}' "$file"
 }
-
-
 
 # 打印模块清单：全部以及已安装
 modules_list() {
@@ -330,7 +342,6 @@ modules_list() {
         printf "  - %s\n" "$bn"
     done
 }
-
 
 # 下载单个模块（module name，不带 .sh）
 download_module() {
@@ -494,175 +505,133 @@ menu() {
     esac
 }
 
-# 进度条
-loadingprogressbar() {
-    local pids=("$@")
-    local total=${#pids[@]}
-    local completed=0
-    local delay=0.02
-    local spinstr='|/-\'
-    local spinindex=0
-    
-    tput civis # 隐藏光标
-    
-    while :; do
-        completed=0
-        for pid in "${pids[@]}"; do
-            if ! kill -0 "$pid" 2>/dev/null; then
-                ((completed++))
-            fi
-        done
-        
-        local percent=$((completed * 100 / total))
-        local bar_length=$((percent / 2)) # 50格进度条
-        local bar=$(printf '%-*s' "$bar_length" '' | tr ' ' '=')
-        local empty=$(printf '%-*s' "$((50-bar_length))" '' | tr ' ' '.')
-        
-        # 取旋转字符
-        local spinchar="${spinstr:$spinindex:1}"
-        spinindex=$(( (spinindex + 1) % 4 ))
-        printf "\r\033[0;31;36mloading[%c] [%-50s] %3d%% (%d/%d)\033[0m" "$spinchar" "$bar$empty" "$percent" "$completed" "$total"
-        
-        if [[ $completed -eq $total ]]; then
-            break
-        fi
-        
-        sleep "$delay"
-    done
-    
-    tput cnorm # 恢复光标
-    printf "\n"
-}
-
-# 等待输入
-waitinput() {
+#重启脚本
+selfrestart(){
     echo
-    read -n1 -r -p "按任意键继续...(退出 Ctrl+C)"
-}
-#继续执行函数
-nextrun() {
-    waitinput
-    if [ -z "$(cat $installdir/config/lastfun)" ]; then
-        main
-    else
-        $(cat $installdir/config/lastfun)
-    fi
-    
+    _green '保持配置..'
+    sleep 0.5
+    _yellow '重启脚本..'
+    echo
+    sleep 1
+    exec s
 }
 
-# 加载动画
-loading() {
-    local pids=("$@")
-    local delay=0.1
-    local spinstr='|/-\'
-    tput civis # 隐藏光标
+#脚本设置
+selfsetting(){
     
-    while :; do
-        local all_done=true
-        for pid in "${pids[@]}"; do
-            if kill -0 "$pid" 2>/dev/null; then
-                all_done=false
-                local temp=${spinstr#?}
-                printf "\r\033[0;31;36m[ %c ] loading ...\033[0m" "$spinstr"
-                local spinstr=$temp${spinstr%"$temp"}
-                sleep $delay
-            fi
-        done
-        [[ $all_done == true ]] && break
-    done
-    
-    tput cnorm        # 恢复光标
-    printf "\r\033[K" # 清除行
-}
-
-#检测命令是否存在
-_exists() {
-    local cmd="$1"
-    which $cmd >/dev/null 2>&1
-    local rt=$?
-    return ${rt}
-}
-
-# 通用下载函数：从镜像列表中依次尝试下载文件
-download_file() {
-    local filename="$1"   # 要下载的文件名（带路径，如 module/status.sh）
-    local output="$2"     # 输出路径（完整路径，不只是目录）
-    local timeout=3
-    
-    for base in "${proxylinks[@]}"; do
-        wget -q --timeout="$timeout" "${base}/sshpc/s/$branch/$filename" -O "$output"
-        if [[ -s "$output" ]]; then
-            return 0
-        else
-            rm -f "$output"
-        fi
-    done
-    
-    return 1
-}
-
-# 下载文件（后台模式，用于并发下载）
-download_file_bg() {
-    local filename="$1"
-    local output="$installdir/$filename"
-    
-    (
-        if ! download_file "$filename" "$output"; then
-            _red "文件 $filename 下载失败！"
-            exit 1
-        fi
-    ) &
-}
-
-# 版本检测函数
-selfversionfun() {
-    selfversion=$(cat "$installdir/version")
-    
-    latestversion_file="$installdir/config/latestversion"
-    [[ -f "$latestversion_file" ]] || touch "$latestversion_file"
-    
-    getlatestversion() {
-        (
-            local tmpfile="$latestversion_file.tmp"
-            if download_file "version" "$tmpfile"; then
-                mv "$tmpfile" "$latestversion_file"
-            else
-                rm -f "$tmpfile"
-            fi
-        ) &
+    #移除脚本
+    removeself() {
+        rm -rf $installdir/core/*
+        rm -rf $installdir/config/*
+        rm -rf $installdir/module/*
+        rm -rf $installdir/version
     }
     
-    local current_time=$(date +%s)
-    local file_mod_time=$(stat -c %Y "$latestversion_file" 2>/dev/null || echo 0)
-    local time_diff=$((current_time - file_mod_time))
+    #卸载脚本
+    uninstallfun() {
+        read -ep "确认卸载 (y/n, 默认n): " delself
+        if [[ "$delself" != "y" ]]; then
+            _yellow "已取消卸载"
+            waitinput
+            return
+        fi
+        
+        removeself
+        # 写入日志
+        slog set install "$datevar  | 脚本卸载 | v$selfversion"
+        
+        read -ep "是否删除配置&日志 (y/n, 默认n): " delconf
+        if [[ "$delconf" == "y" ]]; then
+            rm -rf "$installdir" /bin/s
+            _green "已删除配置和日志"
+        else
+            _yellow "保留了配置和日志"
+        fi
+        
+        _blue '卸载完成'
+        echo
+        waitinput
+        kill -15 $$
+        
+    }
     
-    # 如果文件超过1小时没更新，就后台拉取一次
-    [[ $time_diff -ge 3600 ]] && getlatestversion
+    # 升级脚本
+    updateself() {
+        [[ $branch == 'main' ]] && _yellow "升级脚本? v:$selfversion -> v:$latestversion"
+        waitinput
+        local tmpdir="$installdir/tmp"
+        mkdir -p "$tmpdir"
+        
+        _blue "尝试下载最新版脚本和版本信息..."
+        
+        local s_ok=false v_ok=false
+        
+        if download_file "s.sh" "$tmpdir/s.sh"; then
+            _green "s.sh 下载成功"
+            s_ok=true
+        else
+            _red "s.sh 下载失败"
+        fi
+        
+        if download_file "version" "$tmpdir/version"; then
+            _green "version 下载成功"
+            v_ok=true
+        else
+            _yellow "version 下载失败"
+        fi
+        
+        if $s_ok && $v_ok; then
+            _blue "验证通过，准备更新"
+            cp "$tmpdir/s.sh" "$installdir/s.sh"
+            cp "$tmpdir/version" "$installdir/version"
+            chmod +x "$installdir/s.sh"
+            
+            slog set install "$datevar  | 脚本升级"
+            _blue "卸载旧版本..."
+            removeself
+            loadfilefun
+            exec "$installdir/s.sh"
+        else
+            _red "升级条件不满足，未执行更新"
+        fi
+        
+        rm -rf "$tmpdir"
+    }
     
-    latestversion=$(cat "$latestversion_file" 2>/dev/null)
+    
+    catselfrunlog(){
+        echo
+        slog get runscript
+        echo
+    }
+    
+    openexceptionlog(){
+        echo 'open' >$installdir/config/exception
+        selfrestart
+    }
+    closeexceptionlog(){
+        echo 'close' >$installdir/config/exception
+        selfrestart
+    }
+    switchoverbeta(){
+        echo 'dev' >$installdir/config/branch
+        selfrestart
+    }
+    
+    switchovermain(){
+        echo 'main' >$installdir/config/branch
+        selfrestart
+    }
+    
+    
+    
+    menuname='脚本设置'
+    echo "selfsetting" >$installdir/config/lastfun
+    
+    options=("查看脚本执行日志" catselfrunlog "模块管理" module_manager "打开详细执行日志" openexceptionlog "关闭详细执行日志" closeexceptionlog "升级脚本" updateself "切换成beta版" switchoverbeta "切换成正式版" switchovermain "卸载脚本" uninstallfun)
+    menu "${options[@]}"
 }
 
-#s日志读写
-slog() {
-    local method=$1 #set or get
-    local file=$2
-    local info=$3
-    
-    case $method in
-        set) #写入#
-            echo $info >>${installdir}/log/$file.log
-        ;;
-        get) #读取#
-            tail -20 ${installdir}/log/$file.log
-            
-        ;;
-        *)
-            echo 'log error'
-            
-        ;;
-    esac
-    
-}
 #菜单顶部内容
 beforeMenu(){
     _blue "> ---  当前目录: [ $(pwd) ] ---- < v:${branch}-$selfversion"
@@ -712,6 +681,8 @@ selfinitfun(){
     #检查版本
     if [[ -f "$installdir/config/branch" ]] && grep -q '^dev$' "$installdir/config/branch"; then
         branch='dev'
+    else
+        branch='main'
     fi
     
     # 初始化下载地址列表
@@ -742,7 +713,7 @@ loadfilefun() {
     
     if [[ ${#pids[@]} -gt 0 ]]; then
         echo
-        _yellow '核心文件下载中'
+        _yellow '核心文件下载'
         loadingprogressbar "${pids[@]}" # 显示下载进度
         wait # 等待所有子进程完成
     fi
@@ -862,6 +833,34 @@ exceptionfun(){
     
 }
 
+# 版本检测函数
+selfversionfun() {
+    selfversion=$(cat "$installdir/version")
+    
+    latestversion_file="$installdir/config/latestversion"
+    [[ -f "$latestversion_file" ]] || touch "$latestversion_file"
+    
+    getlatestversion() {
+        (
+            local tmpfile="$latestversion_file.tmp"
+            if download_file "version" "$tmpfile"; then
+                mv "$tmpfile" "$latestversion_file"
+            else
+                rm -f "$tmpfile"
+            fi
+        ) &
+    }
+    
+    local current_time=$(date +%s)
+    local file_mod_time=$(stat -c %Y "$latestversion_file" 2>/dev/null || echo 0)
+    local time_diff=$((current_time - file_mod_time))
+    
+    # 如果文件超过1小时没更新，就后台拉取一次
+    [[ $time_diff -ge 3600 ]] && getlatestversion
+    
+    latestversion=$(cat "$latestversion_file" 2>/dev/null)
+}
+
 #脚本运行
 selfrun(){
     
@@ -890,13 +889,10 @@ selfrun(){
     fi
 }
 
-#脚本运行
 selfinitfun
 loadfilefun
 exceptionfun
-
 selfversionfun
-
 selfrun
 
 
