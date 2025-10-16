@@ -107,14 +107,14 @@ updateself() {
     read -ep "是否下载dev版 (默认n): " yorndev
     if [[ "$yorndev" = "y" ]]; then
 
-        if download_with_mirrors "s.sh" "$tmpdir" "main"; then
+        if download_with_mirrors "s.sh" "$tmpdir" "dev"; then
         _green "s.sh 下载成功"
         s_file_ok=true
     else
         _red "s.sh 下载失败"
     fi
 
-    if download_with_mirrors "version" "$tmpdir" "main"; then
+    if download_with_mirrors "version" "$tmpdir" "dev"; then
         _green "version 下载成功"
         v_file_ok=true
     else
