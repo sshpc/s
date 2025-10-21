@@ -1,4 +1,11 @@
 networkfun() {
+
+    beforeMenu(){
+    _blue "> ---  当前目录: [ $(pwd) ] ---- < v:${branch}-$selfversion"
+    echo
+    _yellow "当前菜单: $menuname "
+    echo
+    }
     
 
 #获取网卡
@@ -613,9 +620,74 @@ EOF
 
     }
 
+    #切换TCP拥塞控制
+    switchTCPctrl(){
+
+        tcpcc=$(sysctl net.ipv4.tcp_congestion_control | awk -F ' ' '{print $3}')
+
+        beforeMenu(){
+            _blue "> ---  当前目录: [ $(pwd) ] ---- < v:${branch}-$selfversion"
+            echo
+            _yellow "当前菜单: $menuname "
+            echo
+            _green "当前TCP CC: $tcpcc" 
+            echo
+        }
+
+        tcpccbbr() {
+            # 检查是否为root权限（修改sysctl.conf需要）
+            [[ $EUID -ne 0 ]] && { echo "错误：需要root权限，请使用sudo执行"; return 1; }
+            
+            # 替换或添加配置（避免重复写入）
+            # 处理默认队列管理算法
+            if grep -q "^net.core.default_qdisc" /etc/sysctl.conf; then
+                sed -i 's/^net.core.default_qdisc=.*/net.core.default_qdisc=fq/' /etc/sysctl.conf
+            else
+                echo "net.core.default_qdisc=fq" >> /etc/sysctl.conf
+            fi
+            # 处理拥塞控制算法
+            if grep -q "^net.ipv4.tcp_congestion_control" /etc/sysctl.conf; then
+                sed -i 's/^net.ipv4.tcp_congestion_control=.*/net.ipv4.tcp_congestion_control=bbr/' /etc/sysctl.conf
+            else
+                echo "net.ipv4.tcp_congestion_control=bbr" >> /etc/sysctl.conf
+            fi
+            sysctl -p
+
+            _blue "已设置TCP拥塞控制为BBR"
+            
+        }
+
+        tcpcccubic() {
+            [[ $EUID -ne 0 ]] && { echo "错误：需要root权限，请使用sudo执行"; return 1; }
+            
+            
+            # 处理默认队列管理算法（CUBIC也可搭配fq，或根据需求调整为pfifo_fast）
+            if grep -q "^net.core.default_qdisc" /etc/sysctl.conf; then
+                sed -i 's/^net.core.default_qdisc=.*/net.core.default_qdisc=fq/' /etc/sysctl.conf
+            else
+                echo "net.core.default_qdisc=fq" >> /etc/sysctl.conf
+            fi
+            # 处理拥塞控制算法
+            if grep -q "^net.ipv4.tcp_congestion_control" /etc/sysctl.conf; then
+                sed -i 's/^net.ipv4.tcp_congestion_control=.*/net.ipv4.tcp_congestion_control=cubic/' /etc/sysctl.conf
+            else
+                echo "net.ipv4.tcp_congestion_control=cubic" >> /etc/sysctl.conf
+            fi
+            sysctl -p
+            _blue "已设置TCP拥塞控制为CUBIC"
+            
+        }
+        
+
+        menuname='首页/网络/切换TCP拥塞控制'
+        options=("切换成bbr" tcpccbbr "切换成cubic" tcpcccubic )
+        menu "${options[@]}"
+
+    }
+
     menuname='首页/网络'
     echo "networkfun" >$installdir/config/lastfun
-    options=( "外网测速" publicnettest "iperf3打流" iperftest "临时http代理" http_proxy  "配置局域网ip" lanfun "nmap扫描" nmapfun "ufw" ufwfun "fail2ban" fail2banfun "系统网络配置优化" system_best "端口转发服务" portforward "测试端口延迟" testport)
+    options=( "外网测速" publicnettest "iperf3打流" iperftest "临时http代理" http_proxy  "配置局域网ip" lanfun "nmap扫描" nmapfun "ufw" ufwfun "fail2ban" fail2banfun "系统网络配置优化" system_best "端口转发服务" portforward "测试端口延迟" testport "切换TCP拥塞控制" switchTCPctrl)
 
     menu "${options[@]}"
 

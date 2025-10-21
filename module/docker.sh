@@ -1,4 +1,10 @@
 dockerfun() {
+    beforeMenu(){
+    _blue "> ---  当前目录: [ $(pwd) ] ---- < v:${branch}-$selfversion"
+    echo
+    _yellow "当前菜单: $menuname "
+    echo
+    }
 
     checkcompose() {
         # 检查当前目录是否存在 docker-compose.yml 文件
@@ -285,6 +291,31 @@ dockerfun() {
         fi
     }
 
+    killcontainer(){
+        catruncontainer
+        _red "注意！这将会使用 docker kill container"
+
+        # 提示用户输入要停止的容器序号
+        read -p "请输入要强行停止的容器序号（从 1 开始）： " index
+
+        # 获取容器的 ID 列表
+        container_ids=($(docker ps -q))
+
+        # 检查输入的序号是否有效
+        if [[ "$index" -gt 0 && "$index" -le "${#container_ids[@]}" ]]; then
+            container_id=${container_ids[$((index - 1))]}
+
+            # 停止容器
+            _blue "正在停止容器：$index"
+            docker kill "$container_id" &
+            loading $!
+            wait
+            _green "已停止"
+        else
+            echo "无效的序号，请输入有效的序号。"
+        fi
+    }
+
     catcomposelogs() {
         checkcompose
         docker-compose logs
@@ -390,6 +421,27 @@ dockerfun() {
         echo "总网络数: $total_networks"
         echo
 
+    }
+
+    catcontainerlogs(){
+        catruncontainer
+
+        # 提示用户输入要停止的容器序号
+        read -p "请输入容器序号（从 1 开始）： " index
+
+        # 获取容器的 ID 列表
+        container_ids=($(docker ps -q))
+
+        # 检查输入的序号是否有效
+        if [[ "$index" -gt 0 && "$index" -le "${#container_ids[@]}" ]]; then
+            container_id=${container_ids[$((index - 1))]}
+
+            _blue "容器：$index"
+            docker logs "$container_id"
+            
+        else
+            echo "无效的序号，请输入有效的序号。"
+        fi
     }
 
     dockerimageimportexport() {
@@ -550,7 +602,7 @@ dockerfun() {
     othercommands() {
 
         menuname='首页/docker/其他'
-        options=("查看状态(高级)" dockerstatusadvancedfun "查看docker网络" catnetworkfun "启动容器" startcontainer "停止容器" stopcontainer "批量启动容器" composestart "批量停止容器" composestop "查看数据卷" catdockervolume "删除命名卷" dockervolumerm "查看docker镜像" catdockerimg "删除无用镜像" dockerimagesrm  "镜像导入导出" dockerimageimportexport )
+        options=("查看状态(高级)" dockerstatusadvancedfun "查看docker网络" catnetworkfun "查看容器日志" catcontainerlogs "启动容器" startcontainer "停止容器" stopcontainer "强制停止容器" killcontainer "批量启动容器" composestart "批量停止容器" composestop "查看数据卷" catdockervolume "删除命名卷" dockervolumerm "查看docker镜像" catdockerimg "删除无用镜像" dockerimagesrm  "镜像导入导出" dockerimageimportexport )
 
         menu "${options[@]}"
     }
@@ -558,7 +610,7 @@ dockerfun() {
 
     menuname='首页/docker'
     echo "dockerfun" >$installdir/config/lastfun
-    options=("查看状态" dockerstatusfun "重启容器" restartcontainer "安装" composeinstall  "安装(强制构建)" composeinstallbuild "终止" composedown "exec进入容器" dockerexec    "查看日志" catcomposelogs "其他" othercommands )
+    options=("查看状态" dockerstatusfun "重启容器" restartcontainer "安装" composeinstall  "安装(强制构建)" composeinstallbuild "终止" composedown "exec进入容器" dockerexec    "查看compose日志" catcomposelogs "其他" othercommands )
 
     menu "${options[@]}"
 

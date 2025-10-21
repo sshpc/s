@@ -1,4 +1,10 @@
 softwarefun() {
+    beforeMenu(){
+    _blue "> ---  当前目录: [ $(pwd) ] ---- < v:${branch}-$selfversion"
+    echo
+    _yellow "当前菜单: $menuname "
+    echo
+    }
 
     runthirdpartyfun() {
         bash <(curl -sSL $1)

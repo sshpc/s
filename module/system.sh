@@ -1,4 +1,10 @@
 systemfun() {
+    beforeMenu(){
+    _blue "> ---  当前目录: [ $(pwd) ] ---- < v:${branch}-$selfversion"
+    echo
+    _yellow "当前菜单: $menuname "
+    echo
+    }
 
     #同步时间
     synchronization_time() {

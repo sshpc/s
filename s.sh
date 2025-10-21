@@ -392,11 +392,6 @@ menu() {
     clear
     
     echo
-    # 检查是否有新版本
-    if [ -n "$latestversion" ] && [ "$selfversion" != "$latestversion" ]; then
-        _yellow "发现新版本 $latestversion ！"
-        echo
-    fi
     
     # 渲染菜单前 检查是否有beforeMenu函数，执行
     declare -F beforeMenu >/dev/null 2>&1 && beforeMenu
@@ -598,6 +593,18 @@ beforeMenu(){
 main() {
     menuname='首页'
     echo "main" >$installdir/config/lastfun
+    beforeMenu(){
+    slogo
+    # 检查是否有新版本
+    if [ -n "$latestversion" ] && [ "$selfversion" != "$latestversion" ]; then
+        _yellow "发现新版本 $latestversion ！"
+        echo
+    fi
+    _blue "> ---  当前目录: [ $(pwd) ] ---- < v:${branch}-$selfversion"
+    echo
+    _yellow "当前菜单: $menuname "
+    echo
+    }
     
     local conf="$installdir/modules.conf"
     local options=()

@@ -1,4 +1,10 @@
 statusfun() {
+    beforeMenu(){
+    _blue "> ---  当前目录: [ $(pwd) ] ---- < v:${branch}-$selfversion"
+    echo
+    _yellow "当前菜单: $menuname "
+    echo
+    }
 
     #检测大小
     calc_size() {
