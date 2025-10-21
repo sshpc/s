@@ -1,4 +1,160 @@
 systemfun() {
+    beforeMenu(){
+    _blue "> ---  当前目录: [ $(pwd) ] ---- < v:${branch}-$selfversion"
+    echo
+    _yellow "当前菜单: $menuname "
+    echo
+    }
+
+    sysinfo() {
+        # 计算大小并转换单位（修正单位传递）
+        calc_size() {
+            local raw=$1 num=1 unit="KB"
+            [[ ! $raw =~ ^[0-9]+$ ]] && { echo ""; return; }
+            if (( raw >= 1073741824 )); then
+                num=1073741824; unit="TB"
+            elif (( raw >= 1048576 )); then
+                num=1048576; unit="GB"
+            elif (( raw >= 1024 )); then
+                num=1024; unit="MB"
+            elif (( raw == 0 )); then
+                echo "0"; return
+            fi
+            #awk -v r="$raw" -v n="$num" -v u="$unit" 'BEGIN{printf "%.1f %s", r/n, u}'
+            total_size=$(awk 'BEGIN{printf "%.1f", '"$raw"' / '$num'}')
+            echo "${total_size} ${unit}"
+        }
+
+        # 转换为KiB
+        to_kibyte() {
+            awk -v r="$1" 'BEGIN{printf "%.0f", r / 1024}'
+        }
+
+        # 计算数组总和
+        calc_sum() {
+            local s=0 i
+            for i in "$@"; do ((s += i)); done
+            echo "$s"
+        }
+
+        # 获取操作系统信息
+        get_opsy() {
+            [[ -f /etc/redhat-release ]] && cat /etc/redhat-release && return
+            if [[ -f /etc/os-release ]]; then
+                awk -F'[= "]' '/PRETTY_NAME/{print $3,$4,$5}' /etc/os-release && return
+            fi
+            [[ -f /etc/lsb-release ]] && awk -F'[="]+' '/DESCRIPTION/{print $2}' /etc/lsb-release && return
+        }
+
+        # 获取电源模式
+        get_power_mode() {
+            local mode=""
+            if command -v powerprofilesctl &>/dev/null; then
+                mode=$(powerprofilesctl get 2>/dev/null)
+            elif [[ -f /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor ]]; then
+                mode=$(cat "$_" 2>/dev/null)
+            elif command -v cpupower &>/dev/null; then
+                mode=$(cpupower frequency-info --policy 2>/dev/null | awk -F': ' '/current policy/ {print $2}' | awk '{print $1}')
+            fi
+
+            case "$mode" in
+                performance) echo "performance";;
+                balanced|ondemand|schedutil) echo "ondemand";;
+                power-saver|powersave) echo "powersave";;
+                *) echo "";;
+            esac
+        }
+
+        # CPU信息
+        cname=$(awk -F: '/model name/ {name=$2} END {gsub(/^[ \t]+|[ \t]+$/, "", name); print name}' /proc/cpuinfo)
+        cores=$(awk '/^processor/ {core++} END {print core}' /proc/cpuinfo)
+        freq=$(awk '/cpu MHz/ {print $4; exit}' /proc/cpuinfo)
+        ccache=$(awk -F: '/cache size/ {cache=$2} END {print cache}' /proc/cpuinfo | sed 's/^[ \t]*//;s/[ \t]*$//')
+        cpu_aes=$(grep -i 'aes' /proc/cpuinfo)
+        cpu_virt=$(grep -Ei 'vmx|svm' /proc/cpuinfo)
+
+        # 内存信息（精确匹配Mem/Swap行，拆分KB变量）
+        free_out=$(free)
+        totalram_kb=$(echo "$free_out" | awk '/^Mem:/ {print $2}')
+        totalram=$(calc_size "$totalram_kb")
+        useram_kb=$(echo "$free_out" | awk '/^Mem:/ {print $3}')
+        useram=$(calc_size "$useram_kb")
+        swap_total_kb=$(echo "$free_out" | awk '/^Swap:/ {print $2}')
+        swap=$(calc_size "$swap_total_kb")
+        uswap_kb=$(echo "$free_out" | awk '/^Swap:/ {print $3}')
+        uswap=$(calc_size "$uswap_kb")
+
+        # 系统运行时间
+        up=$(awk '{a=$1/86400; b=($1%86400)/3600; c=($1%3600)/60} {printf "%d days, %d hour %d min\n", a, b, c}' /proc/uptime)
+
+        # 系统基本信息
+        opsy=$(get_opsy)
+        arch=$(uname -m)
+        power_mode=$(get_power_mode)
+        lbit=$(command -v getconf &>/dev/null && getconf LONG_BIT || (echo "$arch" | grep -q "64" && echo 64 || echo 32))
+        kern=$(uname -r)
+
+        # 磁盘信息（精确匹配df total行，容错zpool输出）
+        df_total=$(df -t simfs -t ext2 -t ext3 -t ext4 -t btrfs -t xfs -t vfat -t ntfs --total 2>/dev/null | grep '^total')
+        in_kernel_total_kb=$(echo "$df_total" | awk '{print $2}')
+        in_kernel_used_kb=$(echo "$df_total" | awk '{print $3}')
+        zfs_total_kb=$(to_kibyte "$(calc_sum "$(zpool list -o size -Hp 2>/dev/null || echo 0)")")
+        zfs_used_kb=$(to_kibyte "$(calc_sum "$(zpool list -o allocated -Hp 2>/dev/null || echo 0)")")
+        disk_total=$(calc_size $((swap_total_kb + in_kernel_total_kb + zfs_total_kb)))
+        disk_used=$(calc_size $((uswap_kb + in_kernel_used_kb + zfs_used_kb)))
+
+        # 网络与虚拟化
+        tcpctrl=$(sysctl net.ipv4.tcp_congestion_control 2>/dev/null | awk '{print $3}')
+        [[ -x "$(command -v dmesg)" ]] && virtualx=$(dmesg 2>/dev/null)
+        if command -v dmidecode &>/dev/null; then
+            sys_manu=$(dmidecode -s system-manufacturer 2>/dev/null)
+            sys_product=$(dmidecode -s system-product-name 2>/dev/null)
+            sys_ver=$(dmidecode -s system-version 2>/dev/null)
+        fi
+
+        # 虚拟化检测
+        if grep -qa docker /proc/1/cgroup; then
+            virt="Docker"
+        elif grep -qa lxc /proc/1/cgroup || grep -qa container=lxc /proc/1/environ; then
+            virt="LXC"
+        elif [[ -f /proc/user_beancounters ]]; then
+            virt="OpenVZ"
+        elif [[ "$virtualx" == *kvm-clock* || "$sys_product" == *KVM* || "$cname" == *KVM* || "$cname" == *QEMU* ]]; then
+            virt="KVM"
+        elif [[ "$virtualx" == *"VMware Virtual Platform"* || "$sys_product" == *"VMware Virtual Platform"* ]]; then
+            virt="VMware"
+        elif [[ "$virtualx" == *"Parallels Software International"* ]]; then
+            virt="Parallels"
+        elif [[ "$virtualx" == *VirtualBox* ]]; then
+            virt="VirtualBox"
+        elif [[ -e /proc/xen ]]; then
+            grep -q "control_d" /proc/xen/capabilities 2>/dev/null && virt="Xen-Dom0" || virt="Xen-DomU"
+        elif [[ -f /sys/hypervisor/type && "$(cat /sys/hypervisor/type)" == *xen* ]]; then
+            virt="Xen"
+        elif [[ "$sys_manu" == *"Microsoft Corporation"* && "$sys_product" == *"Virtual Machine"* ]]; then
+            [[ "$sys_ver" == *"7.0"* || "$sys_ver" == *"Hyper-V" ]] && virt="Hyper-V" || virt="Microsoft Virtual Machine"
+        else
+            virt="Dedicated"
+        fi
+
+        # 输出信息（确保所有变量带单位）
+        echo
+        echo " CPU Model          : $(_blue "${cname:-CPU model not detected}")"
+        echo " CPU Cores          : $(_blue "${cores}${freq:+ @ $freq MHz}")"
+        [[ -n "$ccache" ]] && echo " CPU Cache          : $(_blue "$(calc_size $ccache)")"
+        echo " AES-NI             : $([[ -n "$cpu_aes" ]] && _green "Enabled" || _red "Disabled")"
+        echo " VM-x/AMD-V         : $([[ -n "$cpu_virt" ]] && _green "Enabled" || _red "Disabled")"
+        echo " Total Disk         : $(_yellow "$disk_total") $(_blue "($disk_used Used)")"
+        echo " Total Mem          : $(_yellow "$totalram") $(_blue "($useram Used)")"
+        [[ "$swap" != "0" ]] && echo " Total Swap         : $(_blue "$swap ($uswap Used)")"
+        echo " System uptime      : $(_blue "$up")"
+        echo " OS                 : $(_blue "$opsy")"
+        echo " Arch               : $(_blue "$arch ($lbit Bit)")"
+        echo " Kernel             : $(_blue "$kern")"
+        echo " TCP CC             : $(_yellow "$tcpctrl")"
+        echo " Virtualization     : $(_blue "$virt")"
+        [[ -n "$power_mode" ]] && echo " Power Mode         : $(_blue "$power_mode")"
+    }
 
     #同步时间
     synchronization_time() {
@@ -239,38 +395,7 @@ systemfun() {
             waitinput
             sysbench cpu run
         }
-        #磁盘测速
-        iotestspeed() {
-            #io测试
-            io_test() {
-                (dd if=/dev/zero of=benchtest_$$ bs=512k count=$1 conv=fdatasync && rm -f benchtest_$$) 2>&1 | awk -F, '{io=$NF} END { print io}' | sed 's/^[ \t]*//;s/[ \t]*$//'
-            }
-            _blue "正在进行磁盘测速..."
-            echo
-            freespace=$(df -m . | awk 'NR==2 {print $4}')
-            if [ -z "${freespace}" ]; then
-                freespace=$(df -m . | awk 'NR==3 {print $3}')
-            fi
-            if [ ${freespace} -gt 1024 ]; then
-                io1=$(io_test 2048)
-                echo " I/O Speed(1st run) : $(_yellow "$io1")"
-                io2=$(io_test 2048)
-                echo " I/O Speed(2nd run) : $(_yellow "$io2")"
-                io3=$(io_test 2048)
-                echo " I/O Speed(3rd run) : $(_yellow "$io3")"
-                ioraw1=$(echo $io1 | awk 'NR==1 {print $1}')
-                [ "$(echo $io1 | awk 'NR==1 {print $2}')" == "GB/s" ] && ioraw1=$(awk 'BEGIN{print '$ioraw1' * 1024}')
-                ioraw2=$(echo $io2 | awk 'NR==1 {print $1}')
-                [ "$(echo $io2 | awk 'NR==1 {print $2}')" == "GB/s" ] && ioraw2=$(awk 'BEGIN{print '$ioraw2' * 1024}')
-                ioraw3=$(echo $io3 | awk 'NR==1 {print $1}')
-                [ "$(echo $io3 | awk 'NR==1 {print $2}')" == "GB/s" ] && ioraw3=$(awk 'BEGIN{print '$ioraw3' * 1024}')
-                ioall=$(awk 'BEGIN{print '$ioraw1' + '$ioraw2' + '$ioraw3'}')
-                ioavg=$(awk 'BEGIN{printf "%.1f", '$ioall' / 3}')
-                echo " I/O Speed(average) : $(_yellow "$ioavg MB/s")"
-            else
-                echo " $(_red "Not enough space for I/O Speed test!")"
-            fi
-        }
+        
 
         FastBenchfun() {
             wget -N http://raw.githubusercontent.com/sshpc/FastBench/main/FastBench.sh && chmod +x FastBench.sh && sudo ./FastBench.sh
@@ -284,7 +409,7 @@ systemfun() {
         }
 
         menuname='首页/系统/性能测试'
-        options=("sysbench-cpu测试" sysbenchcputest "stress-cpu压测" cputest "磁盘测速" iotestspeed "机器跑分" FastBenchfun "融合怪测试" ecstest "mysql跑分测试" mysqlBenchfun)
+        options=("sysbench-cpu测试" sysbenchcputest "stress-cpu压测" cputest  "机器跑分" FastBenchfun "融合怪测试" ecstest "mysql跑分测试" mysqlBenchfun)
 
         menu "${options[@]}"
 
@@ -620,7 +745,7 @@ systemfun() {
 
     menuname='首页/系统'
     echo "systemfun" >$installdir/config/lastfun
-    options=( "ps进程搜索" pssearch "setauthorized_keys写入ssh公钥" sshsetpub "rootsshkeypubonly仅密钥root" sshpubonly "synctime同步时间" synchronization_time "sshgetpub生成密钥对" sshgetpub "catauthorized_keys查看公钥" catkeys "crontab计划任务" crontabfun "swap管理" swapfun "rclocal配置" rclocalfun "自定义服务" customservicefun "系统检查" systemcheck "性能测试" performancetest)
+    options=("系统信息" sysinfo "ps进程搜索" pssearch "setauthorized_keys写入ssh公钥" sshsetpub "rootsshkeypubonly仅密钥root" sshpubonly "synctime同步时间" synchronization_time "sshgetpub生成密钥对" sshgetpub "catauthorized_keys查看公钥" catkeys "crontab计划任务" crontabfun "swap管理" swapfun "rclocal配置" rclocalfun "自定义服务" customservicefun "系统检查" systemcheck "性能测试" performancetest)
 
     menu "${options[@]}"
 

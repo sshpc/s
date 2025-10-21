@@ -1,4 +1,11 @@
 networkfun() {
+
+    beforeMenu(){
+    _blue "> ---  当前目录: [ $(pwd) ] ---- < v:${branch}-$selfversion"
+    echo
+    _yellow "当前菜单: $menuname "
+    echo
+    }
     
 
 #获取网卡
@@ -16,6 +23,84 @@ networkfun() {
         # 去掉网卡名称后面的冒号，并输出用户选择的网卡名称
         interface=$(echo "$interface" | sed 's/://')
         echo $interface
+    }
+
+    #实时网速
+    Realtimenetworkspeedfun() {
+        if _exists 'bmon'; then
+            bmon
+        else
+            echo "bmon 未安装,正在安装..."
+            apt-get install bmon -y
+            bmon
+        fi
+    }
+
+    #网络信息
+    netinfo() {
+        echo
+        _blue "--本机IP--" 
+        ifconfig -a | grep "inet "
+
+        _blue "--路由表--" 
+        route -n
+        _blue "--活动连接--"
+        tcpcount=$(netstat -antp | grep ESTABLISHED | wc -l)
+        udpcount=$(netstat -antp | grep -v ESTABLISHED | wc -l)
+        #计算百分比
+        
+        #计算总连接数
+        totalcount=$(($tcpcount + $udpcount))
+        #计算百分比
+        cent=$(echo "scale=2; $totalcount / 65535 * 100" | bc)
+        #最低1%
+        if [ $(echo "$cent < 1" | bc) -eq 1 ]; then
+            cent=1
+        fi
+        #输出结果
+        echo
+        echo "TCP连接数: $tcpcount UDP连接数: $udpcount 总计：$totalcount /65535 ($cent%)"
+        echo
+        _blue "--监听端口--" 
+        netstat -tunlp
+        echo
+        _blue "--公网IP--" 
+        echo "From cip.cc:" $(curl cip.cc)
+        echo
+        echo "From ifconfig.me:" $(curl ifconfig.me)
+        echo
+        _blue "--ip地区--" 
+        local org city country region
+        org="$(wget -q -T10 -O- ipinfo.io/org)"
+        city="$(wget -q -T10 -O- ipinfo.io/city)"
+        country="$(wget -q -T10 -O- ipinfo.io/country)"
+        region="$(wget -q -T10 -O- ipinfo.io/region)"
+        if [[ -n "${org}" ]]; then
+            echo "Organization       : $(_blue "${org}")"
+        fi
+        if [[ -n "${city}" && -n "${country}" ]]; then
+            echo "Location           : $(_blue "${city} / ${country}")"
+        fi
+        if [[ -n "${region}" ]]; then
+            echo "Region             : $(_yellow "${region}")"
+        fi
+        if [[ -z "${org}" ]]; then
+            echo "Region             : $(_red "No ISP detected")"
+        fi
+        _blue "--IP连接数--" 
+        waitinput
+        echo '   数量 ip'
+        netstat -na | grep ESTABLISHED | awk '{print$5}' | awk -F : '{print$1}' | sort | uniq -c | sort -r
+        echo
+        _blue "--ssh失败记录--" 
+        waitinput
+        lastb | grep root | awk '{print $3}' | sort | uniq
+        echo
+    }
+
+    hping3fun() {
+        wget -N http://raw.githubusercontent.com/sshpc/trident/main/run.sh && chmod +x run.sh && sudo ./run.sh
+
     }
 
 
@@ -613,9 +698,74 @@ EOF
 
     }
 
+    #切换TCP拥塞控制
+    switchTCPctrl(){
+
+        tcpcc=$(sysctl net.ipv4.tcp_congestion_control | awk -F ' ' '{print $3}')
+
+        beforeMenu(){
+            _blue "> ---  当前目录: [ $(pwd) ] ---- < v:${branch}-$selfversion"
+            echo
+            _yellow "当前菜单: $menuname "
+            echo
+            _green "当前TCP CC: $tcpcc" 
+            echo
+        }
+
+        tcpccbbr() {
+            # 检查是否为root权限（修改sysctl.conf需要）
+            [[ $EUID -ne 0 ]] && { echo "错误：需要root权限，请使用sudo执行"; return 1; }
+            
+            # 替换或添加配置（避免重复写入）
+            # 处理默认队列管理算法
+            if grep -q "^net.core.default_qdisc" /etc/sysctl.conf; then
+                sed -i 's/^net.core.default_qdisc=.*/net.core.default_qdisc=fq/' /etc/sysctl.conf
+            else
+                echo "net.core.default_qdisc=fq" >> /etc/sysctl.conf
+            fi
+            # 处理拥塞控制算法
+            if grep -q "^net.ipv4.tcp_congestion_control" /etc/sysctl.conf; then
+                sed -i 's/^net.ipv4.tcp_congestion_control=.*/net.ipv4.tcp_congestion_control=bbr/' /etc/sysctl.conf
+            else
+                echo "net.ipv4.tcp_congestion_control=bbr" >> /etc/sysctl.conf
+            fi
+            sysctl -p
+
+            _blue "已设置TCP拥塞控制为BBR"
+            
+        }
+
+        tcpcccubic() {
+            [[ $EUID -ne 0 ]] && { echo "错误：需要root权限，请使用sudo执行"; return 1; }
+            
+            
+            # 处理默认队列管理算法（CUBIC也可搭配fq，或根据需求调整为pfifo_fast）
+            if grep -q "^net.core.default_qdisc" /etc/sysctl.conf; then
+                sed -i 's/^net.core.default_qdisc=.*/net.core.default_qdisc=fq/' /etc/sysctl.conf
+            else
+                echo "net.core.default_qdisc=fq" >> /etc/sysctl.conf
+            fi
+            # 处理拥塞控制算法
+            if grep -q "^net.ipv4.tcp_congestion_control" /etc/sysctl.conf; then
+                sed -i 's/^net.ipv4.tcp_congestion_control=.*/net.ipv4.tcp_congestion_control=cubic/' /etc/sysctl.conf
+            else
+                echo "net.ipv4.tcp_congestion_control=cubic" >> /etc/sysctl.conf
+            fi
+            sysctl -p
+            _blue "已设置TCP拥塞控制为CUBIC"
+            
+        }
+        
+
+        menuname='首页/网络/切换TCP拥塞控制'
+        options=("切换成bbr" tcpccbbr "切换成cubic" tcpcccubic )
+        menu "${options[@]}"
+
+    }
+
     menuname='首页/网络'
     echo "networkfun" >$installdir/config/lastfun
-    options=( "外网测速" publicnettest "iperf3打流" iperftest "临时http代理" http_proxy  "配置局域网ip" lanfun "nmap扫描" nmapfun "ufw" ufwfun "fail2ban" fail2banfun "系统网络配置优化" system_best "端口转发服务" portforward "测试端口延迟" testport)
+    options=("网络信息" netinfo "实时网速" Realtimenetworkspeedfun "外网测速" publicnettest "iperf3打流" iperftest "临时http代理" http_proxy  "配置局域网ip" lanfun "nmap扫描" nmapfun "ufw" ufwfun "fail2ban" fail2banfun "hping3-DDOS" hping3fun "系统网络配置优化" system_best "端口转发服务" portforward "测试端口延迟" testport "切换TCP拥塞控制" switchTCPctrl)
 
     menu "${options[@]}"
 
