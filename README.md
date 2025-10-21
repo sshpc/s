@@ -3,19 +3,19 @@
 ## 示例
 
 ```sh
-> ---- S [ 首页/其他工具 ] -------- < v: x.x
+> ---  当前目录: [ /root ] ---- < v:xxx
 
-当前目录: [ /root ]
+当前菜单: 首页 
 
-1: 状态           2: soft软件管理
+1: 软件管理           2: 网络管理
 
-3: network网络管理  4: system系统管理
+3: 系统管理           4: docker管理
 
-5: docker       6: 其他工具
+5: 磁盘管理           6: 文件管理
 
-7: 升级脚本         8: 卸载脚本
+7: 其他工具           
 
-0: 首页 b: 返回 q: 退出
+0: 首页 b: 返回 q: 退出 s:脚本设置
 
 请输入命令号(0-8): 
 
@@ -128,11 +128,6 @@ s dockerfun dockerimageimportexport  dockerimageexportuseall
 
 s dockerfun dockerimageimportexport  dockerimageimportall
 
-
-### 安装beta版
-```sh
-wget -N  http://raw.githubusercontent.com/sshpc/s/dev/s.sh && chmod +x s.sh &&  bash s.sh
-```
 
 
 

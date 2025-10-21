@@ -641,7 +641,7 @@ selfinitfun(){
         #默认关闭详细执行日志
         echo 'close' >$installdir/config/exception
         
-        echo 'dev' >$installdir/config/branch
+        echo 'main' >$installdir/config/branch
     fi
     
     #检查版本
