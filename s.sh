@@ -273,11 +273,11 @@ modules_list() {
         # 清除回车符、换行符等控制字符
         m=$(echo "$m" | tr -d '\r\n\t')
         [[ -z "$m" ]] && continue
-        echo $m
+        #echo $m
         local func=$(get_ini_value "$m" "name" "$conf")
         local desc=$(get_ini_value "$m" "desc" "$conf")
         local req=$(get_ini_value "$m" "required" "$conf")
-        printf "  - %s (%s) [required=%s]\n" "$m" "${desc:-no-desc}" "${req:-no}"
+        printf " - %s (%s) [required=%s]\n" "$m" "${desc:-no-desc}" "${req:-no}"
     done < <(list_all_modules_from_conf "$conf")
     
     echo
@@ -349,7 +349,7 @@ modules_install() {
     if [[ ${#to_download[@]} -gt 0 ]]; then
         local pids=()
         for m in "${to_download[@]}"; do
-            download_file_bg "module/${m}.sh" &  # 后台并发下载
+            download_file_bg "module/${m}.sh"
             pids+=($!)
         done
         _yellow "模块下载中"
