@@ -638,6 +638,8 @@ selfinitfun(){
         ln -s "$installdir/s.sh" /bin/s
         #默认关闭详细执行日志
         echo 'close' >$installdir/config/exception
+        
+        echo 'dev' >$installdir/config/branch
     fi
     
     #检查版本

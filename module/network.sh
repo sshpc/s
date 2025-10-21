@@ -25,6 +25,84 @@ networkfun() {
         echo $interface
     }
 
+    #实时网速
+    Realtimenetworkspeedfun() {
+        if _exists 'bmon'; then
+            bmon
+        else
+            echo "bmon 未安装,正在安装..."
+            apt-get install bmon -y
+            bmon
+        fi
+    }
+
+    #网络信息
+    netinfo() {
+        echo
+        _blue "--本机IP--" 
+        ifconfig -a | grep "inet "
+
+        _blue "--路由表--" 
+        route -n
+        _blue "--活动连接--"
+        tcpcount=$(netstat -antp | grep ESTABLISHED | wc -l)
+        udpcount=$(netstat -antp | grep -v ESTABLISHED | wc -l)
+        #计算百分比
+        
+        #计算总连接数
+        totalcount=$(($tcpcount + $udpcount))
+        #计算百分比
+        cent=$(echo "scale=2; $totalcount / 65535 * 100" | bc)
+        #最低1%
+        if [ $(echo "$cent < 1" | bc) -eq 1 ]; then
+            cent=1
+        fi
+        #输出结果
+        echo
+        echo "TCP连接数: $tcpcount UDP连接数: $udpcount 总计：$totalcount /65535 ($cent%)"
+        echo
+        _blue "--监听端口--" 
+        netstat -tunlp
+        echo
+        _blue "--公网IP--" 
+        echo "From cip.cc:" $(curl cip.cc)
+        echo
+        echo "From ifconfig.me:" $(curl ifconfig.me)
+        echo
+        _blue "--ip地区--" 
+        local org city country region
+        org="$(wget -q -T10 -O- ipinfo.io/org)"
+        city="$(wget -q -T10 -O- ipinfo.io/city)"
+        country="$(wget -q -T10 -O- ipinfo.io/country)"
+        region="$(wget -q -T10 -O- ipinfo.io/region)"
+        if [[ -n "${org}" ]]; then
+            echo "Organization       : $(_blue "${org}")"
+        fi
+        if [[ -n "${city}" && -n "${country}" ]]; then
+            echo "Location           : $(_blue "${city} / ${country}")"
+        fi
+        if [[ -n "${region}" ]]; then
+            echo "Region             : $(_yellow "${region}")"
+        fi
+        if [[ -z "${org}" ]]; then
+            echo "Region             : $(_red "No ISP detected")"
+        fi
+        _blue "--IP连接数--" 
+        waitinput
+        echo '   数量 ip'
+        netstat -na | grep ESTABLISHED | awk '{print$5}' | awk -F : '{print$1}' | sort | uniq -c | sort -r
+        echo
+        _blue "--ssh失败记录--" 
+        waitinput
+        lastb | grep root | awk '{print $3}' | sort | uniq
+        echo
+    }
+
+    hping3fun() {
+        wget -N http://raw.githubusercontent.com/sshpc/trident/main/run.sh && chmod +x run.sh && sudo ./run.sh
+
+    }
+
 
     
     #ufw防火墙
@@ -687,7 +765,7 @@ EOF
 
     menuname='首页/网络'
     echo "networkfun" >$installdir/config/lastfun
-    options=( "外网测速" publicnettest "iperf3打流" iperftest "临时http代理" http_proxy  "配置局域网ip" lanfun "nmap扫描" nmapfun "ufw" ufwfun "fail2ban" fail2banfun "系统网络配置优化" system_best "端口转发服务" portforward "测试端口延迟" testport "切换TCP拥塞控制" switchTCPctrl)
+    options=("网络信息" netinfo "实时网速" Realtimenetworkspeedfun "外网测速" publicnettest "iperf3打流" iperftest "临时http代理" http_proxy  "配置局域网ip" lanfun "nmap扫描" nmapfun "ufw" ufwfun "fail2ban" fail2banfun "hping3-DDOS" hping3fun "系统网络配置优化" system_best "端口转发服务" portforward "测试端口延迟" testport "切换TCP拥塞控制" switchTCPctrl)
 
     menu "${options[@]}"
 
