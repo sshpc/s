@@ -39,63 +39,9 @@ _blue() {
 
 #logo
 slogo() {
-    
-    # 隐藏光标
-    tput civis
-    
     _green '# 交互式shell脚本工具'
     _green '# Author:SSHPC <https://github.com/sshpc>'
-    sleep 0.5
     echo
-    
-    # 定义要打印的内容
-    local texts=(
-        "   ________       "
-        "  |\   ____\      "
-        "  \ \  \___|_     "
-        "   \ \_____  \    "
-        "    \|____|\  \   "
-        "      ____\_\  \  "
-        "     |\_________\ "
-        "     \|_________| "
-    )
-    
-    # 获取最长行的长度
-    local max_length=0
-    for line in "${texts[@]}"; do
-        len=${#line}
-        if ((len > max_length)); then
-            max_length=$len
-        fi
-    done
-    
-    # 初始化输出数组
-    local output=()
-    for ((i = 0; i < ${#texts[@]}; i++)); do
-        output[$i]=""
-    done
-    
-    # 逐列打印
-    for ((col = 0; col < max_length; col++)); do
-        for ((i = 0; i < ${#texts[@]}; i++)); do
-            line=${texts[$i]}
-            char="${line:$col:1}"
-            if [[ -n $char ]]; then
-                output[$i]+=$char
-            else
-                output[$i]+=" "
-            fi
-        done
-        # 清屏
-        tput clear
-        for line in "${output[@]}"; do
-            _green "$line"
-        done
-        sleep 0.05
-    done
-    
-    # 恢复光标
-    tput cnorm
 }
 
 #回首页
@@ -365,39 +311,48 @@ download_module() {
     fi
 }
 
-# 安装模块：all / default / 单个
+# 安装模块
 modules_install() {
+    _blue "安装模块"
+    echo
     local conf="$installdir/modules.conf"
     [[ -f "$conf" ]] || { _red "缺少 modules.conf，无法安装模块"; return 1; }
-    
+    modules_list
     echo
-    read -ep "全部安装按回车, 仅安装默认(required=yes)请输入 n : " choice
-    if [[ "$choice" == "n" ]]; then
-        _blue "仅安装 required=yes 的模块"
-        while read -r m; do
-            # 清除回车符、换行符等控制字符
-            m=$(echo "$m" | tr -d '\r\n\t')
-            [[ -z "$m" ]] && continue
-            local req=$(get_ini_value "$m" "required" "$conf")
-            if [[ "$req" == "yes" ]]; then
-                download_module "$m"
-            fi
-        done < <(list_all_modules_from_conf "$conf")
-    else
-        _blue "安装全部模块"
-        pids=()
-        for m in $(list_all_modules_from_conf "$conf"); do
-            # 清除回车符、换行符等控制字符
-            m=$(echo "$m" | tr -d '\r\n\t')
-            download_file_bg "module/${m}.sh"
+    read -ep "全部安装-回车 基础安装-n 跳过-p: " choice
+    
+    # 获取并处理所有模块（清除控制字符和空行）
+    local modules=($(list_all_modules_from_conf "$conf" | tr -d '\r\n\t' | grep -v '^$'))
+    local to_download=()
+    
+    # 筛选需要下载的模块
+    case "$choice" in
+        n)
+            _blue "仅安装 required 模块"
+            for m in "${modules[@]}"; do
+                [[ $(get_ini_value "$m" "required" "$conf") == "yes" ]] && to_download+=("$m")
+            done
+        ;;
+        p)
+            _yellow "跳过模块安装"
+        ;;
+        *)
+            
+            _blue "安装全部模块"
+            to_download=("${modules[@]}")
+        ;;
+    esac
+    
+    # 并发下载处理
+    if [[ ${#to_download[@]} -gt 0 ]]; then
+        local pids=()
+        for m in "${to_download[@]}"; do
+            download_file_bg "module/${m}.sh" &  # 后台并发下载
             pids+=($!)
         done
-        if [[ ${#pids[@]} -gt 0 ]]; then
-            _yellow "模块下载中"
-            loadingprogressbar "${pids[@]}"
-            wait
-        fi
-        
+        _yellow "模块下载中"
+        loadingprogressbar "${pids[@]}"
+        wait  # 等待所有下载完成
     fi
 }
 
@@ -721,45 +676,7 @@ loadfilefun() {
     # 如果是首次安装（module 目录为空或没有模块），让用户选择全部安装或仅默认安装
     if [[ -z "$(ls -A $installdir/module 2>/dev/null)" ]] && [[ -s "$installdir/modules.conf" ]]; then
         echo
-        _blue "检测到首次安装：无模块"
-        echo
-        read -ep "全部安装按回车, 仅安装默认(required=yes)请输入 n 跳过p : " choice
-        
-        case "$choice" in
-            n)
-                _blue "仅安装 required=yes 的模块"
-                for m in $(list_all_modules_from_conf "$installdir/modules.conf"); do
-                    # 清除回车符、换行符等控制字符
-                    m=$(echo "$m" | tr -d '\r\n\t')
-                    req=$(get_ini_value "$m" "required" "$installdir/modules.conf")
-                    if [[ "$req" == "yes" ]]; then
-                        download_module "$m"
-                    fi
-                done
-                selfrestart
-            ;;
-            p)
-                _yellow "跳过模块安装"
-            ;;
-            *)
-                _blue "安装全部模块（并行下载）"
-                echo
-                pids=()
-                for m in $(list_all_modules_from_conf "$installdir/modules.conf"); do
-                    # 清除回车符、换行符等控制字符
-                    m=$(echo "$m" | tr -d '\r\n\t')
-                    download_file_bg "module/${m}.sh"
-                    pids+=($!)
-                done
-                if [[ ${#pids[@]} -gt 0 ]]; then
-                    loadingprogressbar "${pids[@]}"
-                    wait
-                fi
-                selfrestart
-            ;;
-        esac
-        
-        
+        modules_install
     fi
     
     # 加载 modules 目录下所有模块脚本（存在的才加载）
