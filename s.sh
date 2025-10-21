@@ -314,22 +314,20 @@ download_module() {
 # 安装模块
 modules_install() {
     _blue "安装模块"
-    echo
     local conf="$installdir/modules.conf"
     [[ -f "$conf" ]] || { _red "缺少 modules.conf，无法安装模块"; return 1; }
     modules_list
     echo
     read -ep "全部安装-回车 基础安装-n 跳过-p: " choice
     
-    # 获取并处理所有模块（清除控制字符和空行）
-    local modules=($(list_all_modules_from_conf "$conf" | tr -d '\r\n\t' | grep -v '^$'))
     local to_download=()
     
     # 筛选需要下载的模块
     case "$choice" in
         n)
             _blue "仅安装 required 模块"
-            for m in "${modules[@]}"; do
+            for m in $(list_all_modules_from_conf "$conf"); do
+                m=$(echo "$m" | tr -d '\r\n\t')
                 [[ $(get_ini_value "$m" "required" "$conf") == "yes" ]] && to_download+=("$m")
             done
         ;;
@@ -339,9 +337,13 @@ modules_install() {
         *)
             
             _blue "安装全部模块"
-            to_download=("${modules[@]}")
+            for m in $(list_all_modules_from_conf "$conf"); do
+                m=$(echo "$m" | tr -d '\r\n\t')
+                to_download+=("$m")
+            done
         ;;
     esac
+
     
     # 并发下载处理
     if [[ ${#to_download[@]} -gt 0 ]]; then
