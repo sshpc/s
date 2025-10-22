@@ -6,6 +6,56 @@ systemfun() {
     echo
     }
 
+    #获取系统安装时间
+    get_system_install_time() {
+        local install_time_raw=""
+        local install_time="未知"
+
+        # 1. 尝试 /var/log/installer/ 或 /root/anaconda-ks.cfg
+        if [[ -d /var/log/installer ]]; then
+            install_time_raw=$(ls -ld /var/log/installer | awk '{print $6,$7,$8}')
+            if [[ -n "$install_time_raw" ]]; then
+                install_time=$(date -d "$install_time_raw" +%F 2>/dev/null)
+                [[ -n "$install_time" ]] && echo "$install_time" && return 0
+            fi
+        elif [[ -f /root/anaconda-ks.cfg ]]; then
+            install_time_raw=$(stat -c '%y' /root/anaconda-ks.cfg 2>/dev/null)
+            if [[ -n "$install_time_raw" ]]; then
+                install_time=$(date -d "$install_time_raw" +%F 2>/dev/null)
+                [[ -n "$install_time" ]] && echo "$install_time" && return 0
+            fi
+        fi
+
+        # 2. /lost+found 目录
+        if [[ -d /lost+found ]]; then
+            install_time_raw=$(stat -c '%w' /lost+found 2>/dev/null)
+            if [[ "$install_time_raw" != "-" && -n "$install_time_raw" ]]; then
+                install_time=$(date -d "$install_time_raw" +%F 2>/dev/null)
+                [[ -n "$install_time" ]] && echo "$install_time" && return 0
+            fi
+        fi
+
+        # 3. tune2fs 查询根分区
+        root_dev=$(df / | tail -1 | awk '{print $1}')
+        if command -v tune2fs >/dev/null 2>&1; then
+            install_time_raw=$(sudo tune2fs -l "$root_dev" 2>/dev/null | grep 'Filesystem created:' | head -1 | awk -F': ' '{print $2}')
+            if [[ -n "$install_time_raw" ]]; then
+                install_time=$(date -d "$install_time_raw" +%F 2>/dev/null)
+                [[ -n "$install_time" ]] && echo "$install_time" && return 0
+            fi
+        fi
+
+        # 4. 根目录修改时间兜底
+        install_time_raw=$(stat -c '%y' / 2>/dev/null)
+        if [[ -n "$install_time_raw" ]]; then
+            install_time=$(date -d "$install_time_raw" +%F 2>/dev/null)
+            [[ -n "$install_time" ]] && echo "$install_time" && return 0
+        fi
+
+        # 5. 如果所有方法都失败
+        echo "未知"
+    }
+
     sysinfo() {
         # 计算大小并转换单位（修正单位传递）
         calc_size() {
@@ -86,6 +136,8 @@ systemfun() {
 
         # 系统运行时间
         up=$(awk '{a=$1/86400; b=($1%86400)/3600; c=($1%3600)/60} {printf "%d days, %d hour %d min\n", a, b, c}' /proc/uptime)
+        # 系统安装时间
+        installtime=$(get_system_install_time)
 
         # 系统基本信息
         opsy=$(get_opsy)
@@ -148,6 +200,7 @@ systemfun() {
         echo " Total Mem          : $(_yellow "$totalram") $(_blue "($useram Used)")"
         [[ "$swap" != "0" ]] && echo " Total Swap         : $(_blue "$swap ($uswap Used)")"
         echo " System uptime      : $(_blue "$up")"
+        echo " System InstallTime : $(_blue "$installtime")"
         echo " OS                 : $(_blue "$opsy")"
         echo " Arch               : $(_blue "$arch ($lbit Bit)")"
         echo " Kernel             : $(_blue "$kern")"
@@ -367,19 +420,74 @@ systemfun() {
         fi
         nextrun
     }
-    #ps进程搜索
-    pssearch() {
-        read -rp "ps -aux | grep ? <- :" -e name
-        if [[ "$name" = "" ]]; then
-            ps -aux
 
+    
+    processquery() {
+        read -rp "请输入要搜索的进程名或服务关键词: " -e keyword
+        echo
+
+        declare -A seen_pids
+
+        if [[ -z "$keyword" ]]; then
+            pids=$(ps -e -o pid=)
         else
-            ps -aux | grep $name
-
+            # 进程匹配
+            pids=$(ps -eo pid,cmd --no-headers | grep -i "$keyword" | grep -v "grep" | awk '{print $1}')
+            # 服务匹配
+            svc_pids=$(systemctl list-units --type=service --all --no-legend 2>/dev/null | grep -i "$keyword" | awk '{print $1}' | \
+                while read svc; do
+                    mainpid=$(systemctl show -p MainPID "$svc" 2>/dev/null | cut -d= -f2)
+                    [[ "$mainpid" != "0" ]] && echo "$mainpid"
+                done)
+            pids=$(echo -e "$pids\n$svc_pids" | sort -u)
         fi
 
-        nextrun
+        [[ -z "$pids" ]] && { echo "未找到匹配的进程或服务。"; return 1; }
+
+        for pid in $pids; do
+            [[ ! -d "/proc/$pid" ]] && continue
+            [[ -n "${seen_pids[$pid]}" ]] && continue
+            seen_pids[$pid]=1
+
+            # 获取服务名（主进程）
+            service_name=$(systemctl list-units --type=service --all --no-legend 2>/dev/null | \
+                awk '{print $1}' | while read svc; do
+                    mainpid=$(systemctl show -p MainPID "$svc" 2>/dev/null | cut -d= -f2)
+                    [[ "$mainpid" == "$pid" ]] && echo "$svc"
+                done | head -n1)
+            [[ -z "$service_name" ]] && service_name="非服务"
+
+            # 命令、执行文件、创建时间
+            cmd=$(cat /proc/$pid/cmdline 2>/dev/null | tr '\0' ' ')
+            [[ -z "$cmd" ]] && cmd="未知"
+            exe_path=$(readlink -f "/proc/$pid/exe" 2>/dev/null)
+            [[ -z "$exe_path" ]] && exe_path="未知"
+            ctime=$(stat -c "%y" "$exe_path" 2>/dev/null | cut -c1-7)
+            [[ -z "$ctime" ]] && ctime="未知"
+
+            # 获取监听端口（TCP/UDP），匹配 PID
+            ports=$(ss -tulnp 2>/dev/null | awk -v pid="$pid" '
+                $0 ~ pid {
+                    split($5,a,":"); print a[length(a)]
+                }' | sort -u | tr '\n' ',' | sed 's/,$//')
+            [[ -z "$ports" ]] && ports="无"
+
+            # 输出
+            if [[ "$service_name" != "非服务" ]]; then
+                echo "服务名: $service_name"
+                echo "主进程 PID: $pid"
+            else
+                echo "进程 PID: $pid"
+            fi
+            echo "命令: $cmd"
+            _green "执行文件: $exe_path"
+            echo "创建时间: $ctime"
+            _yellow "监听端口: $ports"
+            echo "------------------------------------------------------------"
+        done
     }
+
+
     #性能测试
     performancetest() {
         stresscputest() {
@@ -745,7 +853,7 @@ systemfun() {
 
     menuname='首页/系统'
     echo "systemfun" >$installdir/config/lastfun
-    options=("系统信息" sysinfo "ps进程搜索" pssearch "setauthorized_keys写入ssh公钥" sshsetpub "rootsshkeypubonly仅密钥root" sshpubonly "synctime同步时间" synchronization_time "sshgetpub生成密钥对" sshgetpub "catauthorized_keys查看公钥" catkeys "crontab计划任务" crontabfun "swap管理" swapfun "rclocal配置" rclocalfun "自定义服务" customservicefun "系统检查" systemcheck "性能测试" performancetest)
+    options=("系统信息" sysinfo "进程查询" processquery "setauthorized_keys写入ssh公钥" sshsetpub "rootsshkeypubonly仅密钥root" sshpubonly "synctime同步时间" synchronization_time "sshgetpub生成密钥对" sshgetpub "catauthorized_keys查看公钥" catkeys "crontab计划任务" crontabfun "swap管理" swapfun "rclocal配置" rclocalfun "自定义服务" customservicefun "系统检查" systemcheck "性能测试" performancetest)
 
     menu "${options[@]}"
 
