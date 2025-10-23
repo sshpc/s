@@ -52,27 +52,6 @@ diskfun() {
     disksmartinfo(){
         # 磁盘SMART状态自动检查与处理脚本
 
-        # 检查是否在虚拟环境中
-        is_virtual() {
-            # 检查常见虚拟环境特征
-            if grep -qaE 'docker|lxc' /proc/1/cgroup; then
-                return 0
-            elif grep -qE 'vmx|svm' /proc/cpuinfo && ! grep -qE 'GenuineIntel|AuthenticAMD' /proc/cpuinfo | grep -qE 'Intel|AMD'; then
-                return 0
-            elif dmesg 2>/dev/null | grep -qE 'kvm|qemu|vmware|virtualbox|xen'; then
-                return 0
-            elif [ -f /proc/user_beancounters ] || [ -f /sys/hypervisor/type ]; then
-                return 0
-            fi
-            return 1
-        }
-
-        # 若在虚拟环境，直接退出
-        if is_virtual; then
-            echo "在虚拟环境中，跳过磁盘SMART检测"
-            exit 0
-        fi
-
         # 检查root权限
         if [ "$(id -u)" -ne 0 ]; then
             echo "错误：需要root权限，请用sudo运行"

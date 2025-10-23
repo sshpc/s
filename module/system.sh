@@ -488,41 +488,6 @@ systemfun() {
     }
 
 
-    #性能测试
-    performancetest() {
-        stresscputest() {
-            echo "检查安装stress"
-            apt install stress -y
-            echo "默认单核60s测速 手动测试命令: stress -c 2 -t 100  #2代表核数 测试时间100s"
-            waitinput
-            stress -c 1 -t 60
-        }
-        sysbenchcputest() {
-            echo "检查安装sysbench"
-            apt install sysbench -y
-            waitinput
-            sysbench cpu run
-        }
-        
-
-        FastBenchfun() {
-            wget -N http://raw.githubusercontent.com/sshpc/FastBench/main/FastBench.sh && chmod +x FastBench.sh && sudo ./FastBench.sh
-        }
-
-        ecstest() {
-            curl -L https://github.com/spiritLHLS/ecs/raw/main/ecs.sh -o ecs.sh && chmod +x ecs.sh && bash ecs.sh
-        }
-        mysqlBenchfun(){
-            wget -N  http://raw.githubusercontent.com/sshpc/mysql-bench/main/mysql-bench.sh && chmod +x mysql-bench.sh && sudo ./mysql-bench.sh
-        }
-
-        menuname='首页/系统/性能测试'
-        options=("sysbench-cpu测试" sysbenchcputest "stress-cpu压测" cputest  "机器跑分" FastBenchfun "融合怪测试" ecstest "mysql跑分测试" mysqlBenchfun)
-
-        menu "${options[@]}"
-
-    }
-
     
     #计划任务crontab
     crontabfun() {
@@ -853,7 +818,7 @@ systemfun() {
 
     menuname='首页/系统'
     echo "systemfun" >$installdir/config/lastfun
-    options=("系统信息" sysinfo "进程查询" processquery "setauthorized_keys写入ssh公钥" sshsetpub "rootsshkeypubonly仅密钥root" sshpubonly "synctime同步时间" synchronization_time "sshgetpub生成密钥对" sshgetpub "catauthorized_keys查看公钥" catkeys "crontab计划任务" crontabfun "swap管理" swapfun "rclocal配置" rclocalfun "自定义服务" customservicefun "系统检查" systemcheck "性能测试" performancetest)
+    options=("系统信息" sysinfo "进程查询" processquery "setauthorized_keys写入ssh公钥" sshsetpub "rootsshkeypubonly仅密钥root" sshpubonly "synctime同步时间" synchronization_time "sshgetpub生成密钥对" sshgetpub "catauthorized_keys查看公钥" catkeys "crontab计划任务" crontabfun "swap管理" swapfun "rclocal配置" rclocalfun "自定义服务" customservicefun "系统检查" systemcheck)
 
     menu "${options[@]}"
 

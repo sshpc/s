@@ -72,21 +72,6 @@ EOF
 
     }
 
-    IntegratedFunctionScript() {
-        lionfun() {
-            curl -sS -O https://kejilion.pro/kejilion.sh && chmod +x kejilion.sh && ./kejilion.sh
-        }
-        SKY-BOXfun() {
-            wget -O box.sh https://raw.githubusercontent.com/BlueSkyXN/SKY-BOX/main/box.sh && chmod +x box.sh && clear && ./box.sh
-        }
-
-        menuname='首页/其他工具/综合功能脚本'
-
-        options=("科技lion" lionfun "SKY-BOX" SKY-BOXfun)
-        menu "${options[@]}"
-
-    }
-
     #杀死vscode进程
     killvscode() {
 
@@ -110,6 +95,6 @@ EOF
 
     menuname='首页/其他工具'
     echo "ordertoolsfun" >$installdir/config/lastfun
-    options=("安装git便捷提交" igitcommiteasy "杀死vscode进程" killvscode "Siege-web压力测试" siegetest  "打满自身内存" Fillupownmemory "综合功能脚本" IntegratedFunctionScript)
+    options=("安装git便捷提交" igitcommiteasy "杀死vscode进程" killvscode "Siege-web压力测试" siegetest  "打满自身内存" Fillupownmemory)
     menu "${options[@]}"
 }

@@ -477,6 +477,7 @@ selfsetting(){
         rm -rf $installdir/config/*
         rm -rf $installdir/module/*
         rm -rf $installdir/version
+        rm -rf $installdir/modules.conf
     }
     
     #卸载脚本
