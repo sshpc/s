@@ -54,12 +54,21 @@ softwarefun() {
     }
     #修复更新
     configureaptfun() {
-         killall apt apt-get
-         rm /var/cache/apt/archives/lock
-         rm /var/lib/dpkg/lock*
-         rm /var/lib/apt/lists/lock
-         dpkg --configure -a
-         apt update
+        _red '注意这将结束apt|dpkg的全部进程！'
+        waitinput
+        _blue '修复更新..'
+        pkill -9 -f 'apt|dpkg'
+        rm -f /var/lib/dpkg/lock-frontend \
+               /var/lib/dpkg/lock \
+               /var/lib/apt/lists/lock \
+               /var/cache/apt/archives/lock
+        dpkg --configure -a
+        apt-get install -f -y
+        apt-get update -y
+		apt autoremove --purge -y
+		apt autoclean -y
+        apt clean -y
+        _green '修复完成'
     }
     #安装常用包
     installcomso() {

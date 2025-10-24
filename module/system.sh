@@ -814,11 +814,48 @@ systemfun() {
         menu "${options[@]}"
     }
 
+    cleansyslogs() {
+        
+        # 获取当前可用空间
+        local before=$(df --output=avail / | tail -1)
+
+        _blue "清理 systemd 日志..."
+        sudo journalctl --rotate
+        sudo journalctl --vacuum-time=1d
+        sudo journalctl --vacuum-size=300M 
+
+        _blue "清理 APT 日志..."
+        sudo rm -f /var/log/apt/*.log* /var/log/apt/*gz 2>/dev/null
+
+        _blue "清理系统日志..."
+        sudo find /var/log -type f \( -name "*.log" -o -name "*.gz" -o -name "*.1" \) -exec truncate -s 0 {} \; 2>/dev/null
+
+        _blue "清理崩溃日志..."
+        sudo rm -rf /var/crash/* 2>/dev/null
+
+        # 获取清理后可用空间
+        local after=$(df --output=avail / | tail -1)
+        local freed_kb=$((after - before))
+
+        # 计算节省空间（自动单位换算）
+        local freed_human
+        if (( freed_kb >= 1048576 )); then
+            freed_human=$(awk "BEGIN {printf \"%.2f GB\", $freed_kb/1048576}")
+        elif (( freed_kb >= 1024 )); then
+            freed_human=$(awk "BEGIN {printf \"%.2f MB\", $freed_kb/1024}")
+        else
+            freed_human="${freed_kb} KB"
+        fi
+
+        _green "[OK] 清理完成，共释放空间：$freed_human"
+    }
+
+
     
 
     menuname='首页/系统'
     echo "systemfun" >$installdir/config/lastfun
-    options=("系统信息" sysinfo "进程查询" processquery "setauthorized_keys写入ssh公钥" sshsetpub "rootsshkeypubonly仅密钥root" sshpubonly "synctime同步时间" synchronization_time "sshgetpub生成密钥对" sshgetpub "catauthorized_keys查看公钥" catkeys "crontab计划任务" crontabfun "swap管理" swapfun "rclocal配置" rclocalfun "自定义服务" customservicefun "系统检查" systemcheck)
+    options=("系统信息" sysinfo "进程查询" processquery "setauthorized_keys写入ssh公钥" sshsetpub "rootsshkeypubonly仅密钥root" sshpubonly "synctime同步时间" synchronization_time "sshgetpub生成密钥对" sshgetpub "catauthorized_keys查看公钥" catkeys "crontab计划任务" crontabfun "swap管理" swapfun "rclocal配置" rclocalfun "自定义服务" customservicefun "系统检查" systemcheck "清理系统日志" cleansyslogs)
 
     menu "${options[@]}"
 

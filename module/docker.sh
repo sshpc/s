@@ -108,6 +108,10 @@ dockerfun() {
         NETWORKS=$(docker network ls -q | wc -l)
         VOLUMES=$(docker volume ls -q | wc -l)
         
+        
+        docker -v
+	    docker compose version
+        echo
         _blue "基本信息"
         echo "运行中/共: ${RUNNING_CONTAINERS}/${TOTAL_CONTAINERS} 网络: ${NETWORKS} | 卷: ${VOLUMES}"
 
@@ -204,6 +208,11 @@ dockerfun() {
         _green "已清理所有未被使用的镜像"
 
         nextrun
+    }
+
+    dockersysrm(){
+        docker system prune -af --volumes
+        _blue '清理完成'
     }
 
     composestart() {
@@ -602,7 +611,7 @@ dockerfun() {
     othercommands() {
 
         menuname='首页/docker/其他'
-        options=("查看状态(高级)" dockerstatusadvancedfun "查看docker网络" catnetworkfun "查看容器日志" catcontainerlogs "启动容器" startcontainer "停止容器" stopcontainer "强制停止容器" killcontainer "批量启动容器" composestart "批量停止容器" composestop "查看数据卷" catdockervolume "删除命名卷" dockervolumerm "查看docker镜像" catdockerimg "删除无用镜像" dockerimagesrm  "镜像导入导出" dockerimageimportexport )
+        options=("查看状态(高级)" dockerstatusadvancedfun "查看docker网络" catnetworkfun "查看容器日志" catcontainerlogs "启动容器" startcontainer "停止容器" stopcontainer "强制停止容器" killcontainer "批量启动容器composes" composestart "批量停止容器composes" composestop "查看数据卷" catdockervolume "删除命名卷" dockervolumerm "查看docker镜像" catdockerimg "删除无用镜像" dockerimagesrm "Docker清理" dockersysrm  "镜像导入导出" dockerimageimportexport )
 
         menu "${options[@]}"
     }

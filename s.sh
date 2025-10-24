@@ -566,7 +566,7 @@ selfsetting(){
         echo 'close' >$installdir/config/exception
         selfrestart
     }
-    switchoverbeta(){
+    switchoverdev(){
         echo 'dev' >$installdir/config/branch
         selfrestart
     }
@@ -581,7 +581,7 @@ selfsetting(){
     menuname='脚本设置'
     echo "selfsetting" >$installdir/config/lastfun
     
-    options=("查看脚本执行日志" catselfrunlog "模块管理" module_manager "打开详细执行日志" openexceptionlog "关闭详细执行日志" closeexceptionlog "升级脚本" updateself "切换成beta版" switchoverbeta "切换成正式版" switchovermain "卸载脚本" uninstallfun)
+    options=("查看脚本日志" catselfrunlog "模块管理" module_manager "打开详细执行日志" openexceptionlog "关闭详细执行日志" closeexceptionlog "升级脚本" updateself "切换成dev版" switchoverdev "切换成正式版" switchovermain "卸载脚本" uninstallfun)
     menu "${options[@]}"
 }
 
