@@ -454,7 +454,11 @@ menu() {
     
     for ((i = 0; i < num_options; i += 4)); do
         printf "%s%*s  " "$((i / 2 + 1)): ${options[i]}" "$((max_len - ${#options[i]}))"
-        [[ -n "${options[i + 2]}" ]] && printf "$((i / 2 + 2)): ${options[i + 2]}"
+        if (( i + 2 < num_options )); then  
+            if [[ -n "${options[i + 2]}" ]]; then  
+                printf "$((i / 2 + 2)): ${options[i + 2]}"
+            fi
+        fi
         echo -e "\n"
     done
     
