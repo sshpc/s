@@ -9,11 +9,8 @@ ordertoolsfun() {
     
     #安装git便捷提交
     igitcommiteasy() {
-        _yellow '检查系统环境..'
-        if ! command -v git &>/dev/null; then
-            echo "Git没有安装"
-            _blue "Git is already installed"
-        elif _exists 'sgit'; then
+        check_and_install git
+        if  _exists 'sgit'; then
             _red '系统已存在sgit程序,停止安装,请检查!'
             exit
         else
@@ -28,7 +25,7 @@ ordertoolsfun() {
         fi
     }
     siegetest() {
-        apt install siege -y
+        check_and_install siege
         read -rp "输入被测试的url:" -e url
         read -rp "输入并发数1-255: " -e -i 10 erupt
         read -rp "输入测试时间: " -e -i 10 time
@@ -47,11 +44,7 @@ ordertoolsfun() {
     Fillupownmemory() {
         #!/bin/bash
 
-        # 检查系统是否安装了 Python
-        if ! command -v python3 &>/dev/null; then
-            echo "Python 3 未安装，请先安装 Python 3 再运行此脚本。"
-            apt install python3 -y
-        fi
+        check_and_install python3
 
         # 定义 Python 代码块
         python_code=$(

@@ -110,7 +110,7 @@ dockerfun() {
         
         
         docker -v
-	    docker compose version
+        docker compose version
         echo
         _blue "基本信息"
         echo "运行中/共: ${RUNNING_CONTAINERS}/${TOTAL_CONTAINERS} 网络: ${NETWORKS} | 卷: ${VOLUMES}"
@@ -248,6 +248,15 @@ dockerfun() {
         else
             echo "无效的序号，请输入有效的序号。"
         fi
+    }
+
+    restartallcontainer(){
+        catruncontainer
+        _blue "正在重启全部容器"
+        docker restart $(docker ps -q) &
+        loading $!
+        wait
+        _green "已重启"
     }
 
     startcontainer() {
@@ -611,7 +620,7 @@ dockerfun() {
     othercommands() {
 
         menuname='首页/docker/其他'
-        options=("查看状态(高级)" dockerstatusadvancedfun "查看docker网络" catnetworkfun "查看容器日志" catcontainerlogs "启动容器" startcontainer "停止容器" stopcontainer "强制停止容器" killcontainer "批量启动容器composes" composestart "批量停止容器composes" composestop "查看数据卷" catdockervolume "删除命名卷" dockervolumerm "查看docker镜像" catdockerimg "删除无用镜像" dockerimagesrm "Docker清理" dockersysrm  "镜像导入导出" dockerimageimportexport )
+        options=("查看状态(高级)" dockerstatusadvancedfun "查看docker网络" catnetworkfun "查看容器日志" catcontainerlogs "启动容器" startcontainer "停止容器" stopcontainer "强制停止容器" killcontainer "批量启动容器composes" composestart "批量停止容器composes" composestop "重启全部容器" restartallcontainer "查看数据卷" catdockervolume "删除命名卷" dockervolumerm "查看docker镜像" catdockerimg "删除无用镜像" dockerimagesrm "Docker清理" dockersysrm  "镜像导入导出" dockerimageimportexport )
 
         menu "${options[@]}"
     }

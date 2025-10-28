@@ -131,14 +131,8 @@ filefun() {
     #多线程下载
     aria2fun() {
         #检查aria2是否已安装
-        if _exists 'aria2c'; then
-            _blue '安装aria2..'
-
-            apt-get install aria2
-        fi
-
+        check_and_install aria2
         echo 'aria2c -s 2 -x 2 -c http://xxx/xxx'
-
     }
 
     #统计当前目录占用

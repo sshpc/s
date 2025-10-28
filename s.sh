@@ -164,6 +164,51 @@ slog() {
     
 }
 
+#通用安装函数
+check_and_install() {
+    
+    # 检测包管理器
+     if command -v apt &>/dev/null; then
+        PKG_MGR="apt"
+        INSTALL_CMD="apt install -y"
+    elif command -v apt-get &>/dev/null; then
+        PKG_MGR="apt-get"
+        INSTALL_CMD="apt-get install -y"
+    elif command -v yum &>/dev/null; then
+        PKG_MGR="yum"
+        INSTALL_CMD="yum install -y"
+        SEARCH_CMD="yum search"
+    elif command -v dnf &>/dev/null; then
+        PKG_MGR="dnf"
+        INSTALL_CMD="dnf install -y"
+        SEARCH_CMD="dnf search"
+    elif command -v apk &>/dev/null; then
+        PKG_MGR="apk"
+        INSTALL_CMD="apk add --no-cache"
+        SEARCH_CMD="apk search"
+    else
+        _red "未检测到支持的包管理器 （apt, yum, dnf, apk）"
+        return 1
+    fi
+
+     # 逐个检查并安装
+    for cmd in "$@"; do
+
+        # 检查命令是否已存在
+        if command -v "$cmd" &>/dev/null; then
+            continue
+        fi
+
+        _blue "正在尝试安装 $cmd ..."
+        if ! $INSTALL_CMD "$cmd" ;then
+            _red "安装 '$cmd' 失败，请手动检查包名"
+            continue
+        fi
+
+    done
+}
+
+
 # 通用下载函数：从镜像列表中依次尝试下载文件
 download_file() {
     local filename="$1"   # 要下载的文件名（带路径，如 module/status.sh）

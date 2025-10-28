@@ -27,13 +27,8 @@ networkfun() {
 
     #实时网速
     Realtimenetworkspeedfun() {
-        if _exists 'bmon'; then
-            bmon
-        else
-            echo "bmon 未安装,正在安装..."
-            apt-get install bmon -y
-            bmon
-        fi
+        check_and_install bmon
+        bmon
     }
 
     #网络信息
@@ -108,16 +103,7 @@ networkfun() {
     #ufw防火墙
     ufwfun() {
         ufwopen() {
-
-            if _exists 'ufw'; then
-                echo "ufw 已安装"
-            else
-                echo "ufw 未安装,正在安装..."
-                apt install ufw -y
-                echo "ufw 已安装"
-            fi
-
-            echo "请输入y以开启ufw"
+            check_and_install ufw
             ufw enable
             echo "ufw已开启"
         }
@@ -222,9 +208,7 @@ networkfun() {
         }
 
         installfail2ban() {
-            echo "检查并安装fail2ban"
-            apt install fail2ban -y
-            echo "fail2ban 已安装"
+            check_and_install fail2ban
             echo "开始配置fail2ban"
             waitinput
             read -ep "请输入尝试次数 (直接回车默认4次): " retry
@@ -259,13 +243,8 @@ networkfun() {
     #iperf3打流
     iperftest() {
 
-        if _exists 'iperf3'; then
-            echo "iperf3 已安装"
-        else
-            echo "iperf3 未安装,正在安装..."
-            apt install iperf3 -y
-        fi
-
+        check_and_install iperf3
+        
         iperf3client() {
 
             until [[ "$serversip" ]]; do
@@ -295,13 +274,7 @@ networkfun() {
     #nmap扫描
     nmapfun() {
 
-        if _exists 'nmap'; then
-            echo "nmap 已安装"
-
-        else
-            echo "nmap 未安装,正在安装..."
-            apt install nmap -y
-        fi
+        check_and_install nmap
 
         nmapdetection() {
             echo '本地网络：'
@@ -341,7 +314,7 @@ networkfun() {
     publicnettest() {
 
         netfast() {
-            apt install speedtest-cli -y
+            check_and_install speedtest-cli
             echo "开始测速"
             speedtest-cli
             echo "测速完成"
@@ -567,12 +540,7 @@ net.ipv4.tcp_max_orphans = 32768
     }
 
     portforward() {
-        # 检查是否安装了 socat
-        if ! command -v socat &>/dev/null; then
-            _yellow "socat 未安装，正在安装..."
-            apt-get update
-            apt-get install socat -y
-        fi
+        check_and_install socat
         # 定义函数：启动端口转发
         start_port_forward() {
 

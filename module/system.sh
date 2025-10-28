@@ -224,10 +224,8 @@ systemfun() {
             timedatectl set-timezone Asia/Shanghai
             timedatectl set-local-rtc 0
             # 检查ntpd服务是否存在，不存在则安装
-            if ! command -v ntpd &> /dev/null; then
-                echo "正在安装ntp服务..."
-                apt-get update &> /dev/null && apt-get install -y ntp &> /dev/null
-            fi
+            check_and_install ntpd
+            
             timedatectl set-ntp yes
             hwclock -w
             # 检查服务是否存在再重启
@@ -851,11 +849,142 @@ systemfun() {
     }
 
 
-    
+    upservicetime(){
+       set -euo pipefail
+
+        # 临时文件存储服务信息
+        temp_file=$(mktemp)
+
+        # 函数：将运行时间字符串转换为总秒数（用于排序）
+        convert_to_seconds() {
+            local time_str="$1"
+            local total_seconds=0
+
+            # 匹配天（d/days）、时（h/hours）、分（min/minutes/m）、秒（s/seconds）
+            if [[ $time_str =~ ([0-9]+)\ (d|days) ]]; then
+                total_seconds=$(( ${BASH_REMATCH[1]} * 86400 ))  # 1天=86400秒
+            fi
+            if [[ $time_str =~ ([0-9]+)\ (h|hours) ]]; then
+                total_seconds=$(( total_seconds + ${BASH_REMATCH[1]} * 3600 ))  # 1小时=3600秒
+            fi
+            if [[ $time_str =~ ([0-9]+)\ (min|minutes|m) ]]; then
+                total_seconds=$(( total_seconds + ${BASH_REMATCH[1]} * 60 ))  # 1分钟=60秒
+            fi
+            if [[ $time_str =~ ([0-9]+)\ (s|seconds) ]]; then
+                total_seconds=$(( total_seconds + ${BASH_REMATCH[1]} ))  # 秒
+            fi
+
+            echo $total_seconds
+        }
+
+        # 1. 获取所有运行中的服务（仅service类型，状态为running）
+        running_services=$(systemctl list-units --type=service --state=running --no-legend | awk '{print $1}')
+
+        # 2. 遍历每个服务，提取关键信息
+        for service in $running_services; do
+            # 提取服务运行时间（完整字符串，如"1 days"、"2h 30min"）
+            status_output=$(systemctl status "$service" --no-pager)
+            # 修正正则：匹配"since ...; "后的完整时间（直到" ago"结束）
+            runtime_str=$(echo "$status_output" | grep -oP 'Active: active \(running\) since .*?; \K.*?(?= ago)' | sed 's/  */ /g')  # 合并多余空格
+
+            # 提取服务主进程PID
+            main_pid=$(systemctl show -p MainPID "$service" | cut -d= -f2)
+            if [[ $main_pid -le 0 || -z $main_pid ]]; then
+                continue
+            fi
+
+            # 验证PID是否存在
+            if ! ps -p "$main_pid" >/dev/null 2>&1; then
+                continue
+            fi
+
+            # 提取进程名（确保完整，避免被拆分）
+            process_name=$(ps -p "$main_pid" -o comm= | tr -s ' ')  # 移除多余空格
+
+            # 转换运行时间为总秒数（用于排序）
+            runtime_seconds=$(convert_to_seconds "$runtime_str")
+
+            # 写入临时文件（用分隔符"|"避免字段含空格导致拆分错误）
+            echo "$service|$runtime_str|$runtime_seconds|$main_pid|$process_name" >> "$temp_file"
+        done
+
+        # 3. 按总秒数升序排序，取前10个，格式化输出
+        echo "最新运行的10个服务（按运行时间升序）："
+        echo "-----------------------------------------------------------------"
+        printf "%-30s %-20s %-20s %-15s\n" "服务名" "运行时间" "进程名" "进程ID"
+        echo "-----------------------------------------------------------------"
+        # 用"|"分割字段，确保空格不影响列对齐
+        sort -n -t'|' -k3 "$temp_file" | head -n 10 | awk -F'|' '{
+            printf "%-30s %-20s %-20s %-15s\n", $1, $2, $5, $4
+        }'
+
+        # 清理临时文件
+        rm -f "$temp_file"
+    }
+
+    updateservername(){
+        set -euo pipefail
+
+        # 检查是否以root权限运行（修改主机名和hosts需要root）
+        if [ "$(id -u)" -ne 0 ]; then
+            echo "错误：请使用root权限运行（sudo ./change_hostname.sh）"
+            exit 1
+        fi
+
+        # 获取当前主机名
+        current_hostname=$(hostnamectl --static)
+        echo "当前主机名：$current_hostname"
+        echo "-------------------------"
+
+        # 提示用户输入新主机名
+        read -p "请输入新主机名（仅支持字母、数字、连字符'-'，不能以'-'开头/结尾，长度≤63）：" new_hostname
+
+        # 验证主机名合法性（符合Linux主机名规范）
+        validate_hostname() {
+            local hostname="$1"
+            # 正则：仅包含字母、数字、连字符，不以连字符开头/结尾，长度≤63
+            if [[ ! "$hostname" =~ ^[a-zA-Z0-9][a-zA-Z0-9-]{0,61}[a-zA-Z0-9]$ ]]; then
+                echo "错误：主机名格式无效！请重新输入。"
+                return 1
+            fi
+            return 0
+        }
+
+        # 循环验证，直到输入合法
+        while ! validate_hostname "$new_hostname"; do
+            read -p "请重新输入新主机名：" new_hostname
+        done
+
+        # 备份原配置文件（防止修改出错）
+        echo -e "\n正在备份配置文件..."
+        cp -a /etc/hostname "/etc/hostname.bak-$(date +%Y%m%d%H%M)"
+        cp -a /etc/hosts "/etc/hosts.bak-$(date +%Y%m%d%H%M)"
+        echo "备份完成（路径：/etc/hostname.bak-* 和 /etc/hosts.bak-*）"
+
+        # 修改静态主机名（永久生效）
+        echo -e "\n正在修改主机名..."
+        hostnamectl set-hostname "$new_hostname"
+
+        # 更新/etc/hosts文件（替换旧主机名记录，避免本地解析问题）
+        echo "正在更新/etc/hosts文件..."
+        # 替换127.0.1.1对应的旧主机名（这是Linux默认的本地主机名解析条目）
+        sed -i "s/127.0.1.1.*/127.0.1.1\t$new_hostname/" /etc/hosts
+        # 替换其他可能包含旧主机名的条目（如localhost后的别名）
+        sed -i "s/$current_hostname/$new_hostname/g" /etc/hosts
+
+        # 显示修改结果
+        echo -e "\n-------------------------"
+        echo "主机名修改完成！"
+        echo "新主机名：$(hostnamectl --static)"
+        echo "-------------------------"
+        echo "提示："
+        echo "1. 部分程序可能需要重启才能识别新主机名（如SSH服务：sudo systemctl restart sshd）"
+        echo "2. 若需立即在当前终端生效，可执行：exec bash"
+    }
 
     menuname='首页/系统'
     echo "systemfun" >$installdir/config/lastfun
-    options=("系统信息" sysinfo "进程查询" processquery "setauthorized_keys写入ssh公钥" sshsetpub "rootsshkeypubonly仅密钥root" sshpubonly "synctime同步时间" synchronization_time "sshgetpub生成密钥对" sshgetpub "catauthorized_keys查看公钥" catkeys "crontab计划任务" crontabfun "swap管理" swapfun "rclocal配置" rclocalfun "自定义服务" customservicefun "系统检查" systemcheck "清理系统日志" cleansyslogs)
+    options=("系统信息" sysinfo "进程查询" processquery "最新10个启动的服务" upservicetime "setauthorized_keys写入ssh公钥" sshsetpub "rootsshkeypubonly仅密钥root" sshpubonly "synctime同步时间" synchronization_time "sshgetpub生成密钥对" sshgetpub "catauthorized_keys查看公钥" catkeys "crontab计划任务" crontabfun "swap管理" swapfun "rclocal配置" rclocalfun "自定义服务" customservicefun "系统检查" systemcheck "修改主机名" updateservername "清理系统日志" cleansyslogs)
 
     menu "${options[@]}"
 

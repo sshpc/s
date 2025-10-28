@@ -65,46 +65,22 @@ softwarefun() {
         dpkg --configure -a
         apt-get install -f -y
         apt-get update -y
-		apt autoremove --purge -y
-		apt autoclean -y
+        apt autoremove --purge -y
+        apt autoclean -y
         apt clean -y
         _green '修复完成'
     }
     #安装常用包
     installcomso() {
-        echo "开始安装.."
-        install_package() {
-            package_name=$1
-            echo "开始安装 $package_name"
-            apt install $package_name -y
-            echo "$package_name 安装完成"
-        }
-        packages=(
-            "wget"
-            "curl"
-            "net-tools"
-            "vim"
-            "openssh-server"
-            "git"
-            "zip"
-            "htop"
-        )
-        for package in "${packages[@]}"; do
-            package_name="${package%:*}"
-            install_package "$package_name"
-        done
+        check_and_install wget curl net-tools vim openssh-server git zip htop
         echo "所有包都已安装完成"
     }
     
     smbdinstall(){
         _red '注意安装后默认会直接开放home目录匿名可读写访问'
         waitinput
-        # 检查是否已安装samba（只判断ii状态）
-        if ! dpkg -l | grep -E '^ii' | grep -qw samba; then
-            apt update
-            apt install samba -y
-        fi
-        
+        # 检查是否已安装samba
+        check_and_install samba 
         
         # 备份原配置，文件名带日期时间，避免重复覆盖
         backup_time=$(date +"%Y%m%d_%H%M%S")
@@ -230,8 +206,7 @@ softwarefun() {
     }
     
     installbtop() {
-        apt install snap -y
-        apt install snapd -y
+        check_and_install snap snapd
         snap install btop
         btop
     }
@@ -249,8 +224,7 @@ softwarefun() {
         }
         
         installsnapfun() {
-            apt install snap -y
-            apt install snapd -y
+            check_and_install snap snapd
         }
         
         menuname='首页/软件/snap管理'
@@ -260,7 +234,7 @@ softwarefun() {
     
     cputest() {
         echo "检查安装 stress 和 sysbench"
-        apt install -y stress sysbench
+        check_and_install stress sysbench
         
         echo "==== CPU 稳定性测试 (stress) ===="
         echo "持续满载60秒，用于温度与系统稳定性检查"
@@ -283,13 +257,13 @@ softwarefun() {
     }
     
     dockersnapinstall() {
-        apt install snap snapd
+        check_and_install snap snapd
         snap install docker
     }
     
     dockerinstall() {
         runthirdscript https://gitee.com/SuperManito/LinuxMirrors/raw/main/DockerInstallation.sh
-        apt install docker-compose -y
+        check_and_install docker-compose 
     }
     
     installvasma() {
