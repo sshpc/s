@@ -271,8 +271,8 @@ softwarefun() {
         vasma
     }
     
-    installxui() {
-        runthirdscript vaxilu/x-ui/master/install.sh
+    install3xui() {
+        runthirdscript mhsanaei/3x-ui/master/install.sh
     }
     
     installopenvpn() {
@@ -289,14 +289,21 @@ softwarefun() {
         runthirdscript sshpc/rustdesktool/main/rustdesktool.sh
     }
 
-    installlionfun() {
-        curl -sS -O https://kejilion.pro/kejilion.sh && chmod +x kejilion.sh && ./kejilion.sh
+    pvetoolsfun() {
+        runthirdscript oneclickvirt/pve/main/scripts/build_backend.sh
+    }
+
+    hping3fun() {
+        runthirdscript sshpc/trident/main/run.sh
+    }
+    lsyncdshelltoolfun(){
+        runthirdscript sshpc/lsyncd-shell-tool/main/lsyncdtool.sh
     }
         
     
     menuname='首页/软件'
     echo "softwarefun" >$installdir/config/lastfun
-    options=("aptupdate软件更新" aptupdatefun "修复更新" configureaptfun "换软件源" changemirrors "snap管理" snapfun "软件卸载" removefun "安装常用包" installcomso "安装smbd" smbdinstall 安装docker dockerinstall "安装snap版docker" dockersnapinstall "安装btop" installbtop "安装八合一" installvasma "安装xui" installxui "安装openvpn" installopenvpn "安装aapanel" installaapanel "安装RustDesk-Server" installrustdeskserver "cpu测试" cputest  "机器跑分" FastBenchfun "融合怪测试" ecstest "mysql跑分测试" mysqlBenchfun "kejilion管理脚本" installlionfun)
+    options=("aptupdate软件更新" aptupdatefun "修复更新" configureaptfun "换软件源" changemirrors "snap管理" snapfun "软件卸载" removefun "安装常用包" installcomso "安装smbd" smbdinstall 安装docker dockerinstall "安装snap版docker" dockersnapinstall "安装btop" installbtop "安装vasma八合一" installvasma "安装3x-ui" install3xui "安装openvpn" installopenvpn "安装aapanel" installaapanel "安装RustDesk-Server" installrustdeskserver "cpu测试" cputest  "小白机器跑分" FastBenchfun "融合怪测试" ecstest "mysql跑分测试" mysqlBenchfun "pvetools脚本" pvetoolsfun "基于hping3网络攻击脚本" hping3fun "基于lsyncd文件实时同步" lsyncdshelltoolfun)
     menu "${options[@]}"
     
 }

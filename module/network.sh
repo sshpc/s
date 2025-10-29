@@ -93,10 +93,7 @@ networkfun() {
         echo
     }
 
-    hping3fun() {
-        wget -N http://raw.githubusercontent.com/sshpc/trident/main/run.sh && chmod +x run.sh && sudo ./run.sh
-
-    }
+    
 
 
     
@@ -733,7 +730,7 @@ EOF
 
     menuname='首页/网络'
     echo "networkfun" >$installdir/config/lastfun
-    options=("网络信息" netinfo "实时网速" Realtimenetworkspeedfun "外网测速" publicnettest "iperf3打流" iperftest "临时http代理" http_proxy  "配置局域网ip" lanfun "nmap扫描" nmapfun "ufw" ufwfun "fail2ban" fail2banfun "hping3-DDOS" hping3fun "系统网络配置优化" system_best "端口转发服务" portforward "测试端口延迟" testport "切换TCP拥塞控制" switchTCPctrl)
+    options=("网络信息" netinfo "实时网速" Realtimenetworkspeedfun "外网测速" publicnettest "iperf3打流" iperftest "临时http代理" http_proxy  "配置局域网ip" lanfun "nmap扫描" nmapfun "ufw" ufwfun "fail2ban" fail2banfun  "系统网络配置优化" system_best "端口转发服务" portforward "测试端口延迟" testport "切换TCP拥塞控制" switchTCPctrl)
 
     menu "${options[@]}"
 

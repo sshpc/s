@@ -273,10 +273,7 @@ systemfun() {
     }
     #查看本机authorized_keys
     catkeys() {
-
         cat /root/.ssh/authorized_keys
-
-        nextrun
     }
     
     
@@ -416,7 +413,6 @@ systemfun() {
         else
             echo ">>>远程访问策略未设置--------ok"
         fi
-        nextrun
     }
 
     
@@ -503,259 +499,117 @@ systemfun() {
     # 配置自定义服务
     customservicefun() {
 
-        #sysvinit
-        sysvinitfun() {
+        serviceadd() {
 
-            serviceadd() {
+            _yellow "systemctl stop/start 服务名称"
+            echo
+            read -ep "请输入服务名称: " systemdname
+            # 检查服务是否已存在
+            if systemctl list-unit-files | grep -q "^${systemdname}.service"; then
+                _red "服务 ${systemdname} 已存在"
+                return
+            fi
+            echo '例子:'
+            _yellow "xxx.sh  bash /root/xxx.sh  >> /root/systemdname.log 2>&1"
+            _yellow "openvpn --config xxx.ovpn >> /root/openvpn.log 2>&1"
+            echo
+            read -ep "请输入执行程序: " execcmd
+            [[ -z "$execcmd" ]] && { _red "执行命令不能为空"; return; }
+            echo
+            echo '例子:'
+            _yellow "pkill -f xxx(进程名)  or pkill -9 -f xxx"
 
-                _yellow "service 服务名称 stop/start"
-                echo
-                read -ep "请输入服务名称: " servicename
-                service $servicename status >/dev/null
-                if [ $? != 4 ]; then
-                    _red '服务已存在'
-                    exit
-                fi
+            echo
+            read -ep "请输入终止程序(默认 pkill -f $systemdname): " stopcmd
+            [[ -z "$stopcmd" ]] && stopcmd="pkill -f $systemdname"
+            echo
+            next
+            _green "服务名称: $systemdname"
+            echo
+            _green "执行程序: $execcmd"
+            echo
+            _green "终止程序: $stopcmd"
+            next
+            echo
+            waitinput
+            _blue '开始配置'
+            echo
 
-                echo '例子:'
-                _yellow "xxx.sh nohup bash /root/xxx.sh  >> /root/servicename.log 2>&1 &"
-                _yellow "nohup openvpn --config xxx.ovpn >> /root/openvpn.log 2>&1 &"
-                echo
-                read -ep "请输入执行程序: " execcmd
-                echo
-                echo '例子:'
-                _yellow "pkill -f xxx(进程名)  or pkill -9 -f xxx"
+            touch /usr/lib/systemd/system/$systemdname.service
+            echo "[Unit]" >>/usr/lib/systemd/system/$systemdname.service
+            echo "Description=$systemdname Service" >>/usr/lib/systemd/system/$systemdname.service
+            echo "After=network.target" >>/usr/lib/systemd/system/$systemdname.service
+            echo " " >>/usr/lib/systemd/system/$systemdname.service
+            echo "[Service]" >>/usr/lib/systemd/system/$systemdname.service
+            echo "ExecStart=$execcmd" >>/usr/lib/systemd/system/$systemdname.service
+            echo "ExecStop=$stopcmd" >>/usr/lib/systemd/system/$systemdname.service
+            echo "RestartSec=5" >>/usr/lib/systemd/system/$systemdname.service
+            echo " " >>/usr/lib/systemd/system/$systemdname.service
+            echo "[Install]" >>/usr/lib/systemd/system/$systemdname.service
+            echo "WantedBy=multi-user.target" >>/usr/lib/systemd/system/$systemdname.service
+            echo
 
-                echo
-                read -ep "请输入终止程序(默认取服务名): " stopcmd
+            _blue "配置开机自启"
+            systemctl daemon-reload
+            systemctl enable $systemdname
+            echo
+            _blue "操作完成,写入日志"
+            #写入日志
+            slog set systemctl "add-systemctl | $systemdname | $datevar"
+            _blue "开启服务"
+            systemctl start $systemdname
+            systemctl status $systemdname
+            echo
+            echo "文件位置"
+            echo "/usr/lib/systemd/system/$systemdname.service"
+            echo "/etc/systemd/system/multi-user.target.wants/$systemdname.service"
+            echo
+            _blue "现在可以使用systemctl start/stop/status $systemdname"
 
-                if [[ "$stopcmd" = "" ]]; then
-                    stopcmd="pkill -f $servicename"
-                fi
-                echo
-                next
-                _green "服务名称: $servicename"
-                echo
-                _green "执行程序: $execcmd"
-                echo
-                _green "终止程序: $stopcmd"
-                next
-                echo
-                waitinput
-                _blue '开始配置'
-                echo
-
-                touch /etc/init.d/$servicename
-                echo "#!/bin/sh" >>/etc/init.d/$servicename
-                echo " " >>/etc/init.d/$servicename
-                echo "### BEGIN INIT INFO" >>/etc/init.d/$servicename
-                echo "# Provides: $servicename" >>/etc/init.d/$servicename
-                echo '# Required-Start: $network $remote_fs $local_fs' >>/etc/init.d/$servicename
-                echo '# Required-Stop: $network $remote_fs $local_fs' >>/etc/init.d/$servicename
-                echo "# Default-Start: 2 3 4 5" >>/etc/init.d/$servicename
-                echo "# Default-Stop: 0 1 6" >>/etc/init.d/$servicename
-                echo "# Short-Description: $servicename" >>/etc/init.d/$servicename
-                echo "# Description: $servicename" >>/etc/init.d/$servicename
-                echo "### END INIT INFO" >>/etc/init.d/$servicename
-                echo " " >>/etc/init.d/$servicename
-                echo "start() {" >>/etc/init.d/$servicename
-                echo "$execcmd" >>/etc/init.d/$servicename
-                echo "}" >>/etc/init.d/$servicename
-                echo "stop() {" >>/etc/init.d/$servicename
-                echo "$stopcmd" >>/etc/init.d/$servicename
-                echo "}" >>/etc/init.d/$servicename
-                echo 'case "$1" in' >>/etc/init.d/$servicename
-                echo "  start)" >>/etc/init.d/$servicename
-                echo " start" >>/etc/init.d/$servicename
-                echo " ;;" >>/etc/init.d/$servicename
-                echo "  stop)" >>/etc/init.d/$servicename
-                echo "  stop" >>/etc/init.d/$servicename
-                echo " ;;" >>/etc/init.d/$servicename
-                echo " *)" >>/etc/init.d/$servicename
-                echo " exit 1" >>/etc/init.d/$servicename
-                echo " ;;" >>/etc/init.d/$servicename
-                echo "esac" >>/etc/init.d/$servicename
-                echo " " >>/etc/init.d/$servicename
-                echo "exit 0" >>/etc/init.d/$servicename
-                chmod +x /etc/init.d/$servicename
-                _blue "配置开机自启"
-                update-rc.d $servicename defaults
-                echo
-                _blue "操作完成,写入日志"
-                #写入日志
-                slog set service "add-service | $servicename | $datevar"
-                _blue "开启服务"
-                service $servicename start
-                service $servicename status
-                echo
-                _green "文件位置 /etc/init.d/$servicename "
-                echo
-                _blue "现在可以使用service $servicename  start/stop/status"
-
-            }
-
-            servicedel() {
-
-                #读取日志
-                slog get service
-                echo
-                read -ep "请输入删除的服务名称: " servicename
-                service $servicename status >/dev/null
-                if [ $? == 4 ]; then
-                    _red '服务不存在'
-                    exit
-                fi
-                _red "停止服务"
-                echo
-                service $servicename stop
-                _red "移除开机自启"
-                echo
-                update-rc.d -f $servicename remove
-
-                echo
-                _red "删除服务文件"
-                echo
-                rm -rf /etc/init.d/$servicename
-                #重新加载 systemd 配置
-                systemctl daemon-reload
-                #写入日志
-                slog set service "del-service | $servicename | $datevar"
-                _blue "操作完成"
-                echo
-
-            }
-
-            menuname='首页/系统/自定义服务/sysvinit'
-            options=("添加服务" serviceadd "删除服务" servicedel)
-
-            menu "${options[@]}"
         }
 
-        #systemd
-        systemdfun() {
+        servicedel() {
 
-            serviceadd() {
+            #读取日志
+            slog get systemctl
+            echo
+            read -ep "请输入删除的服务名称: " systemdname
+            service $servicename status >/dev/null
+            if [ $? == 4 ]; then
+                _red '服务不存在'
+                exit
+            fi
+            _red "停止服务"
+            echo
+            systemctl stop $systemdname
+            _red "移除开机自启"
+            echo
+            systemctl disable $systemdname
 
-                _yellow "systemctl stop/start 服务名称"
-                echo
-                read -ep "请输入服务名称: " systemdname
-                service $systemdname status >/dev/null
-                if [ $? != 4 ]; then
-                    _red '服务已存在'
-                    exit
-                fi
-                echo '例子:'
-                _yellow "xxx.sh  bash /root/xxx.sh  >> /root/systemdname.log 2>&1"
-                _yellow "openvpn --config xxx.ovpn >> /root/openvpn.log 2>&1"
-                echo
-                read -ep "请输入执行程序: " execcmd
-                echo
-                echo '例子:'
-                _yellow "pkill -f xxx(进程名)  or pkill -9 -f xxx"
+            echo
+            _red "删除服务文件"
+            echo
+            rm -rf /usr/lib/systemd/system/$systemdname.service
+            rm -rf /etc/systemd/system/multi-user.target.wants/$systemdname.service
+            #重新加载 systemd 配置
+            systemctl daemon-reload
+            #写入日志
+            slog set systemctl "del-systemctl | $systemdname | $datevar"
+            _blue "操作完成"
+            echo
 
-                echo
-                read -ep "请输入终止程序(默认取服务名): " stopcmd
-
-                if [[ "$stopcmd" = "" ]]; then
-                    stopcmd="pkill -f $systemdname"
-                fi
-                echo
-                next
-                _green "服务名称: $systemdname"
-                echo
-                _green "执行程序: $execcmd"
-                echo
-                _green "终止程序: $stopcmd"
-                next
-                echo
-                waitinput
-                _blue '开始配置'
-                echo
-
-                touch /usr/lib/systemd/system/$systemdname.service
-                echo "[Unit]" >>/usr/lib/systemd/system/$systemdname.service
-                echo "Description=$systemdname Service" >>/usr/lib/systemd/system/$systemdname.service
-                echo "After=network.target" >>/usr/lib/systemd/system/$systemdname.service
-                echo " " >>/usr/lib/systemd/system/$systemdname.service
-                echo "[Service]" >>/usr/lib/systemd/system/$systemdname.service
-                echo "ExecStart=$execcmd" >>/usr/lib/systemd/system/$systemdname.service
-                echo "ExecStop=$stopcmd" >>/usr/lib/systemd/system/$systemdname.service
-                echo " " >>/usr/lib/systemd/system/$systemdname.service
-                echo "[Install]" >>/usr/lib/systemd/system/$systemdname.service
-                echo "WantedBy=multi-user.target" >>/usr/lib/systemd/system/$systemdname.service
-                echo
-
-                _blue "配置开机自启"
-                systemctl enable $systemdname
-                echo
-                _blue "操作完成,写入日志"
-                #写入日志
-                slog set systemctl "add-systemctl | $systemdname | $datevar"
-                _blue "开启服务"
-                systemctl start $systemdname
-                systemctl status $systemdname
-                echo
-                echo "文件位置"
-                echo "/usr/lib/systemd/system/$systemdname.service"
-                echo "/etc/systemd/system/multi-user.target.wants/$systemdname.service"
-                echo
-                _blue "现在可以使用systemctl start/stop/status $systemdname"
-
-            }
-
-            servicedel() {
-
-                #读取日志
-                slog get systemctl
-                echo
-                read -ep "请输入删除的服务名称: " systemdname
-                service $servicename status >/dev/null
-                if [ $? == 4 ]; then
-                    _red '服务不存在'
-                    exit
-                fi
-                _red "停止服务"
-                echo
-                systemctl stop $systemdname
-                _red "移除开机自启"
-                echo
-                systemctl disable $systemdname
-
-                echo
-                _red "删除服务文件"
-                echo
-                rm -rf /usr/lib/systemd/system/$systemdname.service
-                rm -rf /etc/systemd/system/multi-user.target.wants/$systemdname.service
-                #重新加载 systemd 配置
-                systemctl daemon-reload
-                #写入日志
-                slog set systemctl "del-systemctl | $systemdname | $datevar"
-                _blue "操作完成"
-                echo
-
-            }
-            menuname='首页/系统/自定义服务/systemd'
-            options=("添加服务" serviceadd "删除服务" servicedel)
-
-            menu "${options[@]}"
         }
 
         #服务配置日志
         servicelogfun() {
-            _yellow service
-            echo
-            #读取日志
-            slog get service
-
             _yellow systemctl
             echo
             #读取日志
             slog get systemctl
-            nextrun
         }
 
         menuname='首页/系统/自定义服务'
-        options=("sysvinit" sysvinitfun "systemd" systemdfun "服务配置日志" servicelogfun)
+        options=("添加服务" serviceadd "删除服务" servicedel "服务配置日志" servicelogfun)
 
         menu "${options[@]}"
 

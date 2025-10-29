@@ -164,8 +164,6 @@ dockerfun() {
         else
             echo "无效的序号，请输入有效的序号。"
         fi
-        nextrun
-
     }
     
 
@@ -206,8 +204,6 @@ dockerfun() {
         loading $!
         wait
         _green "已清理所有未被使用的镜像"
-
-        nextrun
     }
 
     dockersysrm(){
@@ -489,7 +485,6 @@ dockerfun() {
             else
             _red "无效的序号"
             fi
-            nextrun
         }
 
         dockerimageexportuseall(){
@@ -497,7 +492,6 @@ dockerfun() {
             used_images=($(docker ps --format '{{.Image}}' | sort | uniq))
             if [ ${#used_images[@]} -eq 0 ]; then
                 _red "当前没有正在使用的镜像"
-                nextrun
             fi
             for image in "${used_images[@]}"; do
                 filename="/home/img/${image//[:\/]/_}.tar"
@@ -509,7 +503,6 @@ dockerfun() {
             wait
             _green "导出成功"
             ls /home/img
-            nextrun
         }
 
 
@@ -525,7 +518,6 @@ dockerfun() {
             wait                 # 等待所有子进程完成
             _green "导出成功"
             ls /home/img
-            nextrun
         }
 
         dockerimageimportall() {
@@ -565,7 +557,6 @@ dockerfun() {
                     docker load -i "$file" && _green "导入成功" || _red "导入失败"
                 fi
             done
-            nextrun
         }
 
         menuname='首页/docker/镜像导入导出'

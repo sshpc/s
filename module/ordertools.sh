@@ -83,11 +83,13 @@ EOF
         menu "${options[@]}"
     }
 
-    
+    gitfilemodefalse(){
+        git config --add core.filemode false
+    }
 
 
     menuname='首页/其他工具'
     echo "ordertoolsfun" >$installdir/config/lastfun
-    options=("安装git便捷提交" igitcommiteasy "杀死vscode进程" killvscode "Siege-web压力测试" siegetest  "打满自身内存" Fillupownmemory)
+    options=("安装git便捷提交" igitcommiteasy "git忽略文件权限改动" gitfilemodefalse "杀死vscode进程" killvscode "Siege-web压力测试" siegetest  "打满自身内存" Fillupownmemory )
     menu "${options[@]}"
 }

@@ -16,7 +16,7 @@ proxyhost=(
 # 默认主页
 menuname='主页'
 #分支(main 正式版 dev开发版)
-branch='dev'
+branch=''
 # 日期时间
 datevar=$(date +"%Y-%m-%d %H:%M:%S")
 # 颜色定义
@@ -436,8 +436,8 @@ menu() {
     if [ $is_param_mode -eq 1 ]; then
         return
     fi
-    clear
-    
+    #clear
+    printf "\033[H\033[2J"
     echo
     
     # 渲染菜单前 检查是否有beforeMenu函数，执行
