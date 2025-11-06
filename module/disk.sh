@@ -47,6 +47,11 @@ diskfun() {
         _blue "\n物理磁盘"
         fdisk -l 2>/dev/null | grep -E "Disk /dev|Disk model" | sed 's/^/  /'
     }
+    #磁盘占用扫描
+    diskscan(){
+        check_and_install gdu
+        gdu /
+    }
 
 
     disksmartinfo(){
@@ -460,7 +465,7 @@ diskfun() {
 
     menuname='首页/磁盘管理'
     echo "diskfun" >$installdir/config/lastfun
-    options=("磁盘信息" diskinfo "查看磁盘SMART信息" disksmartinfo "磁盘测速" diskspeedtest "扩容根分区" expandroot "格式化其他磁盘并挂载" formatotherdisks)
+    options=("磁盘信息" diskinfo "磁盘占用扫描" diskscan "查看磁盘SMART信息" disksmartinfo "磁盘测速" diskspeedtest "扩容根分区" expandroot "格式化其他磁盘并挂载" formatotherdisks)
 
     menu "${options[@]}"
 

@@ -72,7 +72,7 @@ softwarefun() {
     }
     #安装常用包
     installcomso() {
-        check_and_install wget curl net-tools vim openssh-server git zip htop
+        check_and_install wget curl net-tools vim openssh-server git zip htop gdu
         echo "所有包都已安装完成"
     }
     
