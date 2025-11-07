@@ -262,7 +262,7 @@ softwarefun() {
     }
     
     dockerinstall() {
-        runthirdscript https://gitee.com/SuperManito/LinuxMirrors/raw/main/DockerInstallation.sh
+        runthirdscript SuperManito/LinuxMirrors/main/DockerInstallation.sh
         check_and_install docker-compose 
     }
     
