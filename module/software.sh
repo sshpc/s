@@ -9,6 +9,7 @@ softwarefun() {
     #下载并执行sh #参数 例: 'vaxilu/x-ui/master/install.sh'
     runthirdscript() {
         local url="$1"
+        local param="$2"
         local outputdir="$HOME/thirdscript"
         local timeout=3
         local filename=$(basename "$url")
@@ -27,7 +28,7 @@ softwarefun() {
                 if [[ -s "$outputdir/$filename" ]]; then
                     _green "已下载文件：$filename"
                     chmod +x "$outputdir/$filename"
-                    bash "$outputdir/$filename"
+                    bash "$outputdir/$filename" "$param"
                     return 0
                 else
                     _red "文件为空或下载失败：$filename"
@@ -44,12 +45,23 @@ softwarefun() {
     
     #更新所有已安装的软件包
     aptupdatefun() {
-        _blue "更新所有软件包"
         dpkg --configure -a
-        if [[ -n $(pgrep -f "apt") ]]; then
-            pgrep -f apt | xargs kill -9
+        if [[ -n $(pgrep -f "apt|apt-get") ]]; then
+            _yellow "→ 终止占用apt的进程..."
+            pgrep -f "apt|apt-get" | xargs kill -9 2>/dev/null
         fi
-        apt-get update -y && apt-get install curl -y
+        _blue "→ 正在更新软件包列表（apt update）..."
+        apt-get update -y
+        _blue "→ 是否升级所有已安装软件包（apt upgrade）？"
+        read -p "输入 y 确认升级，不升级直接回车：" -n 1 -r -t 7 choice
+
+        if [[ $choice =~ ^[Yy]$ ]]; then
+            echo
+            _blue "→ 开始升级软件包（过程可能较长）..."
+            apt-get upgrade -y
+        else
+            _blue "跳过升级"
+        fi
         _blue "更新完成"
     }
     #修复更新
@@ -72,7 +84,7 @@ softwarefun() {
     }
     #安装常用包
     installcomso() {
-        check_and_install wget curl net-tools vim openssh-server git zip htop gdu
+        check_and_install wget curl jq net-tools vim openssh-server git zip htop gdu
         echo "所有包都已安装完成"
     }
     
@@ -106,14 +118,22 @@ softwarefun() {
     #换源
     changemirrors() {
         cnmainland() {
-            bash <(curl -sSL https://linuxmirrors.cn/main.sh)
+            runthirdscript SuperManito/LinuxMirrors/main/ChangeMirrors.sh
         }
         overseas() {
-            bash <(curl -sSL https://raw.githubusercontent.com/SuperManito/LinuxMirrors/main/ChangeMirrors.sh) --abroad
+            runthirdscript SuperManito/LinuxMirrors/main/ChangeMirrors.sh --abroad
+        }
+
+        cnmainlandedu(){
+            runthirdscript SuperManito/LinuxMirrors/main/ChangeMirrors.sh --edu
+        }
+
+        getlinuxmirrorsmain(){
+            bash <(curl -sSL https://linuxmirrors.cn/main.sh)
         }
         
         menuname='首页/软件/换源'
-        options=("大陆" cnmainland "海外" overseas)
+        options=("大陆" cnmainland "海外" overseas "教育网" cnmainlandedu "getlinuxmirrors大陆" getlinuxmirrorsmain)
         menu "${options[@]}"
         
         if [ -f /etc/apt/sources.list.bak ]; then
@@ -143,15 +163,30 @@ softwarefun() {
         removedocker() {
             docker kill $(docker ps -a -q)
             docker rm $(docker ps -a -q)
-            docker rmi $(docker images -q)
+            docker rmi -f $(docker images -a -q) 2>/dev/null || true
+            docker volume rm $(docker volume ls -q) 2>/dev/null || true
+            docker network rm $(docker network ls -q | grep -vE 'bridge|host|none') 2>/dev/null || true
+            systemctl stop docker 2>/dev/null
+            systemctl stop docker.socket 2>/dev/null
+            systemctl disable docker 2>/dev/null
+            pkill -f docker 2>/dev/null
+            pkill -f containerd 2>/dev/null
+            pkill -f runc 2>/dev/null
+            killall -9 docker containerd containerd-shim runc docker-proxy 2>/dev/null
+            apt-get purge -y docker-ce docker-ce-cli docker-compose-plugin docker.io \
+        containerd.io runc docker-ce-rootless-extras 2>/dev/null || true
             apt-get autoremove docker docker-ce docker-engine docker.io containerd runc
             apt-get autoremove docker-ce-*
+            apt-get autoremove -y 2>/dev/null || true
+            apt-get autoclean 2>/dev/null || true
             rm -rf /etc/systemd/system/docker.service.d
             rm -rf /var/lib/docker
+            rm -rf /var/lib/containerd
             rm -rf /etc/docker
             rm -rf /run/docker
             rm -rf /var/lib/dockershim
-            umount /var/lib/docker/devicemapper
+            umount /var/lib/docker/devicemapper 2>/dev/null || true
+            umount /var/lib/docker 2>/dev/null || true
             masterremove docker
         }
         removev2() {
@@ -205,13 +240,19 @@ softwarefun() {
         menu "${options[@]}"
     }
     
-    installbtop() {
-        check_and_install snap snapd
-        snap install btop
-        btop
-    }
-    
     snapfun() {
+        beforeMenu(){
+            _blue "> ---  当前目录: [ $(pwd) ] ---- < v:${branch}-$selfversion"
+            echo
+            if command -v snap &> /dev/null; then
+                _green "snap 已安装"
+            else
+                _red "snap 未安装"
+            fi
+            echo
+            _yellow "当前菜单: $menuname "
+            echo
+        }
         snapls() {
             echo
             _blue version:
@@ -222,13 +263,21 @@ softwarefun() {
             echo
             snap list
         }
-        
-        installsnapfun() {
+        checksnap() {
             check_and_install snap snapd
+        }
+        installbtop() {
+            checksnap
+            snap install btop
+            btop
+        }
+        dockersnapinstall() {
+            checksnap
+            snap install docker
         }
         
         menuname='首页/软件/snap管理'
-        options=("查看 snap 状态" snapls "安装" installsnapfun)
+        options=("查看 snap 状态" snapls "安装" checksnap "安装btop" installbtop "安装snap版docker" dockersnapinstall)
         menu "${options[@]}"
     }
     
@@ -254,11 +303,6 @@ softwarefun() {
     }
     mysqlBenchfun(){
         runthirdscript sshpc/mysql-bench/main/mysql-bench.sh
-    }
-    
-    dockersnapinstall() {
-        check_and_install snap snapd
-        snap install docker
     }
     
     dockerinstall() {
@@ -290,7 +334,7 @@ softwarefun() {
     }
 
     pvetoolsfun() {
-        runthirdscript oneclickvirt/pve/main/scripts/build_backend.sh
+        runthirdscript ivanhao/pvetools/master/pvetools.sh
     }
 
     hping3fun() {
@@ -303,7 +347,7 @@ softwarefun() {
     
     menuname='首页/软件'
     echo "softwarefun" >$installdir/config/lastfun
-    options=("aptupdate软件更新" aptupdatefun "修复更新" configureaptfun "换软件源" changemirrors "snap管理" snapfun "软件卸载" removefun "安装常用包" installcomso "安装smbd" smbdinstall 安装docker dockerinstall "安装snap版docker" dockersnapinstall "安装btop" installbtop "安装vasma八合一" installvasma "安装3x-ui" install3xui "安装openvpn" installopenvpn "安装aapanel" installaapanel "安装RustDesk-Server" installrustdeskserver "cpu测试" cputest  "小白机器跑分" FastBenchfun "融合怪测试" ecstest "mysql跑分测试" mysqlBenchfun "pvetools脚本" pvetoolsfun "基于hping3网络攻击脚本" hping3fun "基于lsyncd文件实时同步" lsyncdshelltoolfun)
+    options=("aptupdate软件更新" aptupdatefun "修复更新" configureaptfun "换软件源" changemirrors "snap管理" snapfun "软件卸载" removefun "安装常用包" installcomso "安装smbd" smbdinstall 安装docker dockerinstall   "安装vasma八合一" installvasma "安装3x-ui" install3xui "安装openvpn" installopenvpn "安装aapanel" installaapanel "安装RustDesk-Server" installrustdeskserver "cpu测试" cputest  "小白机器跑分" FastBenchfun "融合怪测试" ecstest "mysql跑分测试" mysqlBenchfun "pvetools脚本" pvetoolsfun "基于hping3网络攻击脚本" hping3fun "基于lsyncd文件实时同步" lsyncdshelltoolfun)
     menu "${options[@]}"
     
 }

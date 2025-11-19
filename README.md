@@ -1,5 +1,5 @@
 # 交互式shell脚本工具
-
+> Debian系
 ## 示例
 
 ```sh
@@ -24,7 +24,7 @@
 
 ## 安装
 
-Debian系 root 用户
+> root 用户
 
 ### 一键安装(推荐)
 
@@ -50,6 +50,8 @@ wget -N  https://gh-proxy.com/http://raw.githubusercontent.com/sshpc/s/main/s.sh
 wget -N  https://edgeone.gh-proxy.com/http://raw.githubusercontent.com/sshpc/s/main/s.sh && chmod +x s.sh &&  bash s.sh
 ```
 ## 说明
+
+
 
 新增参数模式 可传入多个函数参数，从而不进入交互操作直接执行
 >自定义执行命令 自行查看脚本结构 (避免_exists slog 等内部工具函数、无意义、无效函数执行)
