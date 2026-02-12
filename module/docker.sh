@@ -142,10 +142,6 @@ dockerfun() {
         _blue "容器情况"
         _green 'runing'
         docker ps
-        _blue 'all'
-        docker ps -a
-        
-
     }
 
     dockerexec() {
@@ -451,7 +447,28 @@ dockerfun() {
             container_id=${container_ids[$((index - 1))]}
 
             _blue "容器：$index"
-            docker logs "$container_id"
+            docker logs --tail 50 "$container_id"
+            
+        else
+            echo "无效的序号，请输入有效的序号。"
+        fi
+    }
+
+    catrealtimecontainerlogs(){
+        catruncontainer
+
+        # 提示用户输入要停止的容器序号
+        read -p "请输入容器序号（从 1 开始）： " index
+
+        # 获取容器的 ID 列表
+        container_ids=($(docker ps -q))
+
+        # 检查输入的序号是否有效
+        if [[ "$index" -gt 0 && "$index" -le "${#container_ids[@]}" ]]; then
+            container_id=${container_ids[$((index - 1))]}
+
+            _blue "容器：$index"
+            docker logs --tail 10 --follow "$container_id"
             
         else
             echo "无效的序号，请输入有效的序号。"
@@ -611,7 +628,7 @@ dockerfun() {
     othercommands() {
 
         menuname='首页/docker/其他'
-        options=("查看状态(高级)" dockerstatusadvancedfun "查看docker网络" catnetworkfun "查看容器日志" catcontainerlogs "启动容器" startcontainer "停止容器" stopcontainer "强制停止容器" killcontainer "批量启动容器composes" composestart "批量停止容器composes" composestop "重启全部容器" restartallcontainer "查看数据卷" catdockervolume "删除命名卷" dockervolumerm "查看docker镜像" catdockerimg "删除无用镜像" dockerimagesrm "Docker清理" dockersysrm  "镜像导入导出" dockerimageimportexport )
+        options=("查看状态(高级)" dockerstatusadvancedfun "查看docker网络" catnetworkfun "最新容器日志50条" catcontainerlogs "启动容器" startcontainer "停止容器" stopcontainer "强制停止容器" killcontainer "批量启动容器composes" composestart "批量停止容器composes" composestop "重启全部容器" restartallcontainer "查看数据卷" catdockervolume "删除命名卷" dockervolumerm "查看docker镜像" catdockerimg "删除无用镜像" dockerimagesrm "Docker清理" dockersysrm  "镜像导入导出" dockerimageimportexport "实时容器日志" catrealtimecontainerlogs)
 
         menu "${options[@]}"
     }
