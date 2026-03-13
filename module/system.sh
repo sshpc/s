@@ -516,6 +516,18 @@ systemfun() {
             read -ep "请输入执行程序: " execcmd
             [[ -z "$execcmd" ]] && { _red "执行命令不能为空"; return; }
             echo
+            _yellow "例子: /root 或 /usr/local/bin（留空则使用系统默认目录 /）"
+            echo
+            read -ep "请输入执行目录: " workdir
+            # 空值处理：默认使用根目录 /
+            [[ -z "$workdir" ]] && workdir="/"
+            # 检查目录是否存在（可选，增强健壮性）
+            if [[ ! -d "$workdir" ]]; then
+                _red "警告：执行目录 ${workdir} 不存在，是否继续？(y/n)"
+                read -r confirm
+                [[ "$confirm" != "y" && "$confirm" != "Y" ]] && { _red "操作取消"; return; }
+            fi
+
             echo '例子:'
             _yellow "pkill -f xxx(进程名)  or pkill -9 -f xxx"
 
@@ -527,6 +539,8 @@ systemfun() {
             _green "服务名称: $systemdname"
             echo
             _green "执行程序: $execcmd"
+            echo
+            _green "执行目录: $workdir" 
             echo
             _green "终止程序: $stopcmd"
             next
@@ -541,6 +555,7 @@ systemfun() {
             echo "After=network.target" >>/usr/lib/systemd/system/$systemdname.service
             echo " " >>/usr/lib/systemd/system/$systemdname.service
             echo "[Service]" >>/usr/lib/systemd/system/$systemdname.service
+            echo "WorkingDirectory=$workdir" >>/usr/lib/systemd/system/$systemdname.service
             echo "ExecStart=$execcmd" >>/usr/lib/systemd/system/$systemdname.service
             echo "ExecStop=$stopcmd" >>/usr/lib/systemd/system/$systemdname.service
             echo "RestartSec=5" >>/usr/lib/systemd/system/$systemdname.service

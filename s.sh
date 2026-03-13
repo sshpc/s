@@ -37,6 +37,10 @@ _blue() {
     echo
 }
 
+next(){
+    echo '----------------------------'
+}
+
 #logo
 slogo() {
     _green '# 交互式shell脚本工具'
