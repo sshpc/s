@@ -15,8 +15,6 @@ proxyhost=(
 
 # 默认主页
 menuname='主页'
-#分支(main 正式版 dev开发版)
-branch=''
 # 日期时间
 datevar=$(date +"%Y-%m-%d %H:%M:%S")
 # 颜色定义
@@ -220,7 +218,7 @@ download_file() {
     local timeout=3
     
     for base in "${proxylinks[@]}"; do
-        wget -q --timeout="$timeout" "${base}/sshpc/s/$branch/$filename" -O "$output"
+        wget -q --timeout="$timeout" "${base}/sshpc/s/main/$filename" -O "$output"
         if [[ -s "$output" ]]; then
             return 0
         else
@@ -435,16 +433,146 @@ module_manager() {
     menu "${options[@]}"
 }
 
-#菜单渲染
+# ==================== 版本管理 ====================
+
+# 备份当前版本到 bak 目录
+backup_current_version() {
+    local bakdir="$installdir/bak/$selfversion"
+    mkdir -p "$bakdir/module"
+    
+    cp -f "$installdir/s.sh" "$bakdir/s.sh"
+    cp -f "$installdir/version" "$bakdir/version"
+    [[ -f "$installdir/modules.conf" ]] && cp -f "$installdir/modules.conf" "$bakdir/modules.conf"
+    for f in "$installdir/module"/*.sh; do
+        [[ -f "$f" ]] && cp -f "$f" "$bakdir/module/"
+    done
+}
+
+# 列出所有备份版本
+list_backup_versions() {
+    local bakroot="$installdir/bak"
+    if [[ ! -d "$bakroot" ]] || [[ -z "$(ls -A "$bakroot" 2>/dev/null)" ]]; then
+        _yellow "暂无备份版本"
+        return 1
+    fi
+    echo
+    _blue "已备份版本列表："
+    local idx=0
+    for vdir in "$bakroot"/*/; do
+        [[ ! -d "$vdir" ]] && continue
+        local ver=$(basename "$vdir")
+        local marker=""
+        [[ "$ver" == "$selfversion" ]] && marker=" (当前)"
+        ((idx++))
+        printf "  %d. v%s%s\n" "$idx" "$ver" "$marker"
+    done
+    [[ $idx -eq 0 ]] && _yellow "暂无备份版本"
+}
+
+# 切换到指定备份版本
+switch_version() {
+    local target_ver="$1"
+    local bakdir="$installdir/bak/$target_ver"
+    
+    if [[ ! -d "$bakdir" ]]; then
+        _red "备份版本 $target_ver 不存在"
+        return 1
+    fi
+    
+    if [[ "$target_ver" == "$selfversion" ]]; then
+        _yellow "当前已是 v$target_ver，无需切换"
+        return 0
+    fi
+    
+    _yellow "切换到版本 v$selfversion -> v$target_ver"
+    
+    cp -f "$bakdir/s.sh" "$installdir/s.sh"
+    cp -f "$bakdir/version" "$installdir/version"
+    [[ -f "$bakdir/modules.conf" ]] && cp -f "$bakdir/modules.conf" "$installdir/modules.conf"
+    rm -f "$installdir/module"/*.sh
+    if [[ -d "$bakdir/module" ]]; then
+        for f in "$bakdir/module"/*.sh; do
+            [[ -f "$f" ]] && cp -f "$f" "$installdir/module/"
+        done
+    fi
+    
+    chmod +x "$installdir/s.sh"
+    slog set install "$datevar  | 版本切换 | v$selfversion -> v$target_ver"
+    _green "已切换到版本 v$target_ver"
+}
+
+# 交互式版本选择
+version_select() {
+    local bakroot="$installdir/bak"
+    if [[ ! -d "$bakroot" ]] || [[ -z "$(ls -A "$bakroot" 2>/dev/null)" ]]; then
+        _yellow "暂无可切换的备份版本"
+        return
+    fi
+    
+    list_backup_versions
+    echo
+    read -ep "输入版本号切换 (如 1.0.0) 或回车取消: " ver_input
+    [[ -z "$ver_input" ]] && { _yellow "已取消"; return; }
+    
+    local bakdir="$installdir/bak/$ver_input"
+    if [[ ! -d "$bakdir" ]]; then
+        _red "版本 v$ver_input 备份不存在"
+        return
+    fi
+    
+    if [[ "$ver_input" == "$selfversion" ]]; then
+        _yellow "当前已是 v$ver_input"
+        return
+    fi
+    
+    read -ep "确认切换到 v$ver_input ? (y/n, 默认n): " confirm
+    [[ "$confirm" != "y" ]] && { _yellow "已取消"; return; }
+    
+    switch_version "$ver_input"
+    selfrestart
+}
+
+# 清理旧备份（保留最近N个）
+cleanup_old_backups() {
+    local keep=${1:-5}
+    local bakroot="$installdir/bak"
+    [[ ! -d "$bakroot" ]] && return
+    
+    local dirs=()
+    for d in "$bakroot"/*/; do
+        [[ -d "$d" ]] && dirs+=("$d")
+    done
+    
+    local count=${#dirs[@]}
+    if (( count <= keep )); then
+        return
+    fi
+    
+    # 按修改时间排序，删除最旧的
+    local to_remove=$((count - keep))
+    local sorted=($(ls -dt "$bakroot"/*/ 2>/dev/null))
+    for ((i = count - 1; i >= count - to_remove; i--)); do
+        [[ -d "${sorted[i]}" ]] && rm -rf "${sorted[i]}"
+    done
+}
+
+# 版本管理菜单
+version_manager() {
+    menuname='版本管理'
+    echo "selfsetting" >$installdir/config/lastfun
+    options=("查看备份版本" list_backup_versions "切换版本" version_select "升级到最新" updateself)
+    menu "${options[@]}"
+}
+
+# ==================== 菜单渲染 ====================
+
 menubak() {
     if [ $is_param_mode -eq 1 ]; then
         return
     fi
-    #clear
     printf "\033[H\033[2J"
     echo
     
-    # 渲染菜单前 检查是否有beforeMenu函数，执行
     declare -F beforeMenu >/dev/null 2>&1 && beforeMenu
     
     local options=("$@")
@@ -474,13 +602,9 @@ menubak() {
     case "$number" in
         [1-9]|[1-9][0-9]*)
             if [[ $number -ge 1 && $number -le $((num_options / 2)) ]]; then
-                #找到函数名索引
                 local action_index=$((2 * (number - 1) + 1))
-                #函数名赋值
                 parentfun=${options[action_index]}
-                #记录运行日志
                 declare -F slog >/dev/null 2>&1 && slog set runscript "$datevar | $menuname | ${options[action_index]} (${options[action_index - 1]})"
-                #函数执行
                 ${options[action_index]}
                 nextrun
             else
@@ -509,16 +633,20 @@ menubak() {
         ;;
     esac
 }
+
 menu() {
+    if [ "$menustyle" = "menubak" ]; then
+        menubak "$@"
+        return
+    fi
+
     if [ "$is_param_mode" -eq 1 ]; then
         return
     fi
 
-    # 清屏
     printf "\033[H\033[2J"
     echo
 
-    # 渲染菜单前 检查是否有beforeMenu函数，执行
     declare -F beforeMenu >/dev/null 2>&1 && beforeMenu
 
     local options=("$@")
@@ -651,15 +779,14 @@ selfsetting(){
         fi
         
         removeself
-        # 写入日志
         slog set install "$datevar  | 脚本卸载 | v$selfversion"
         
-        read -ep "是否删除配置&日志 (y/n, 默认n): " delconf
+        read -ep "是否删除配置&日志&备份 (y/n, 默认n): " delconf
         if [[ "$delconf" == "y" ]]; then
             rm -rf "$installdir" /bin/s
-            _green "已删除配置和日志"
+            _green "已删除配置、日志和备份"
         else
-            _yellow "保留了配置和日志"
+            _yellow "保留了配置、日志和备份"
         fi
         
         _blue '卸载完成'
@@ -671,8 +798,19 @@ selfsetting(){
     
     # 升级脚本
     updateself() {
-        [[ $branch == 'main' ]] && _yellow "升级脚本? v:$selfversion -> v:$latestversion"
-        waitinput
+        if [[ "$selfversion" == "$latestversion" ]]; then
+            _yellow "当前已是最新版本 v$selfversion"
+            read -ep "是否强制重新下载? (y/n, 默认n): " force
+            [[ "$force" != "y" ]] && return
+        else
+            _yellow "升级脚本? v:$selfversion -> v:$latestversion"
+            read -ep "确认升级? (y/n/s跳过, 默认y): " upconfirm
+            if [[ "$upconfirm" == "s" || "$upconfirm" == "n" ]]; then
+                _yellow "已跳过升级"
+                return
+            fi
+        fi
+        
         local tmpdir="$installdir/tmp"
         mkdir -p "$tmpdir"
         
@@ -695,14 +833,25 @@ selfsetting(){
         fi
         
         if $s_ok && $v_ok; then
-            _blue "验证通过，准备更新"
+            local new_ver=$(cat "$tmpdir/version" | tr -d '\r\n\t ')
+            
+            _blue "备份当前版本 v$selfversion ..."
+            backup_current_version
+            
+            _blue "安装新版本 v$new_ver ..."
             cp "$tmpdir/s.sh" "$installdir/s.sh"
             cp "$tmpdir/version" "$installdir/version"
             chmod +x "$installdir/s.sh"
             
-            slog set install "$datevar  | 脚本升级"
-            _blue "卸载旧版本..."
-            removeself
+            slog set install "$datevar  | 脚本升级 | v$selfversion -> v$new_ver"
+            
+            cleanup_old_backups 5
+            
+            _green "升级完成 v$selfversion -> v$new_ver"
+            
+            _blue "重新加载模块..."
+            rm -f "$installdir/module"/*.sh
+            rm -f "$installdir/modules.conf"
             loadfilefun
             exec "$installdir/s.sh"
         else
@@ -727,28 +876,26 @@ selfsetting(){
         echo 'close' >$installdir/config/exception
         selfrestart
     }
-    switchoverdev(){
-        echo 'dev' >$installdir/config/branch
+    
+    switchmenumodern(){
+        echo 'menu' >$installdir/config/menustyle
         selfrestart
     }
-    
-    switchovermain(){
-        echo 'main' >$installdir/config/branch
+    switchmenubak(){
+        echo 'menubak' >$installdir/config/menustyle
         selfrestart
     }
-    
-    
     
     menuname='脚本设置'
     echo "selfsetting" >$installdir/config/lastfun
     
-    options=("查看脚本日志" catselfrunlog "模块管理" module_manager "打开详细执行日志" openexceptionlog "关闭详细执行日志" closeexceptionlog "升级脚本" updateself "切换成dev版" switchoverdev "切换成正式版" switchovermain "卸载脚本" uninstallfun)
+    options=("查看脚本日志" catselfrunlog "版本管理" version_manager "模块管理" module_manager "打开详细执行日志" openexceptionlog "关闭详细执行日志" closeexceptionlog "升级脚本" updateself "菜单样式:现代" switchmenumodern "菜单样式:经典" switchmenubak "卸载脚本" uninstallfun)
     menu "${options[@]}"
 }
 
 #菜单顶部内容
 beforeMenu(){
-    _blue "> ---  当前目录: [ $(pwd) ] ---- < v:${branch}-$selfversion"
+    _blue "> ---  当前目录: [ $(pwd) ] ---- < v:$selfversion [$menustyle]"
     echo
     _yellow "当前菜单: $menuname "
     echo
@@ -759,12 +906,11 @@ main() {
     echo "main" >$installdir/config/lastfun
     beforeMenu(){
     slogo
-    # 检查是否有新版本
     if [ -n "$latestversion" ] && [ "$selfversion" != "$latestversion" ]; then
         _yellow "发现新版本 $latestversion ！"
         echo
     fi
-    _blue "> ---  当前目录: [ $(pwd) ] ---- < v:${branch}-$selfversion"
+    _blue "> ---  当前目录: [ $(pwd) ] ---- < v:$selfversion [$menustyle]"
     echo
     _yellow "当前菜单: $menuname "
     echo
@@ -774,10 +920,8 @@ main() {
     local options=()
     
     for m in $(list_all_modules_from_conf "$conf"); do
-        # 清除回车符、换行符等控制字符
         m=$(echo "$m" | tr -d '\r\n\t')
         if  [[ -s "$installdir/module/$m.sh" ]] ; then
-            # desc 用作显示文字， name 是要执行的函数
             local desc=$(get_ini_value "$m" "desc" "$conf")
             local func=$(get_ini_value "$m" "name" "$conf")
             [[ -z "$desc" ]] && desc="$m"
@@ -797,20 +941,20 @@ selfinitfun(){
     if [ ! -d "$installdir" ]; then
         slogo
         _blue "欢迎使用"
-        mkdir -p "$installdir" "$installdir/log" "$installdir/config" "$installdir/module"
+        mkdir -p "$installdir" "$installdir/log" "$installdir/config" "$installdir/module" "$installdir/bak"
         cp -f "$(pwd)/s.sh" "$installdir/s.sh"
         ln -s "$installdir/s.sh" /bin/s
-        #默认关闭详细执行日志
         echo 'close' >$installdir/config/exception
-        
-        echo 'main' >$installdir/config/branch
+        echo 'menu' >$installdir/config/menustyle
     fi
     
-    #检查版本
-    if [[ -f "$installdir/config/branch" ]] && grep -q '^dev$' "$installdir/config/branch"; then
-        branch='dev'
+    mkdir -p "$installdir/bak"
+    
+    #读取菜单样式
+    if [[ -f "$installdir/config/menustyle" ]] && grep -q '^menubak$' "$installdir/config/menustyle"; then
+        menustyle='menubak'
     else
-        branch='main'
+        menustyle='menu'
     fi
     
     # 初始化下载地址列表
@@ -834,16 +978,16 @@ loadfilefun() {
     pids=()
     for shfile in "${shfiles[@]}"; do
         if [[ ! -s "$installdir/$shfile" ]]; then
-            download_file_bg "$shfile" # 如果文件不存在或为空，调用 filecheck
-            pids+=($!)          # 收集子进程 PID
+            download_file_bg "$shfile"
+            pids+=($!)
         fi
     done
     
     if [[ ${#pids[@]} -gt 0 ]]; then
         echo
         _yellow '核心文件下载'
-        loadingprogressbar "${pids[@]}" # 显示下载进度
-        wait # 等待所有子进程完成
+        loadingprogressbar "${pids[@]}"
+        wait
     fi
     
     # 如果是首次安装（module 目录为空或没有模块），让用户选择全部安装或仅默认安装
@@ -860,7 +1004,6 @@ loadfilefun() {
 
 #终止和日志函数
 exceptionfun(){
-    #异常终止函数
     _exit() {
         if [ -e "./speedtest-cli/speedtest" ]; then
             rm -rf ./speedtest-cli
@@ -868,27 +1011,21 @@ exceptionfun(){
         [[ -d "$installdir/tmp" ]] && rm -rf $installdir/tmp
         exit 1
     }
-    #异常终止执行函数
     trap _exit INT QUIT TERM
     
-    # 检查exceptionlogvar 是否开启(判断 $installdir/config/exception 文件是否有内容 'open' 则开启)
     if [[ -f "$installdir/config/exception" ]] && grep -q '^open$' "$installdir/config/exception"; then
         LOGFILE="${installdir}/log/runscript.log"
         
-        # 把 xtrace 输出到日志文件
         exec 19>>"$LOGFILE"
-        set -T   # 子 shell / 函数也触发 DEBUG
+        set -T
         
-        # 白名单数组（不写日志的外部命令）
         CMD_WHITELIST=("sleep" "clear" "tr" "wc" "cat" "awk" "sort" "sed")
         
-        # 用关联数组
         declare -A WHITELIST_MAP
         for w in "${CMD_WHITELIST[@]}"; do
             WHITELIST_MAP["$w"]=1
         done
         
-        # 判断是否在白名单里
         in_whitelist() {
             local c="$1"
             for w in "${CMD_WHITELIST[@]}"; do
@@ -899,20 +1036,16 @@ exceptionfun(){
             return 1
         }
         
-        # 捕获外部程序命令
         BASH_COMMAND_LOGGER() {
-            # 避免递归触发日志函数
             if [[ "$BASH_COMMAND" == *"BASH_COMMAND_LOGGER"* ]]; then
                 return 0
             fi
             local cmd="${BASH_COMMAND%% *}"
             
-            # 命令跳过
             if [[ -n "${WHITELIST_MAP["$cmd_name"]}" ]]; then
                 return 0
             fi
             
-            # 仅记录外部程序 & 不在白名单
             if [ "$(type -t "$cmd" 2>/dev/null)" = "file" ]; then
                 local log_time=$(date '+%F %T')
                 printf "%s [%d] %s\n" "$log_time" "$$" "$BASH_COMMAND" >> "$LOGFILE"
@@ -945,7 +1078,6 @@ selfversionfun() {
     local file_mod_time=$(stat -c %Y "$latestversion_file" 2>/dev/null || echo 0)
     local time_diff=$((current_time - file_mod_time))
     
-    # 如果文件超过1小时没更新，就后台拉取一次
     [[ $time_diff -ge 3600 ]] && getlatestversion
     
     latestversion=$(cat "$latestversion_file" 2>/dev/null)
@@ -954,15 +1086,12 @@ selfversionfun() {
 #脚本运行
 selfrun(){
     
-    # 检测处理命令行参数（直接执行函数）
-    is_param_mode=0  # 新增：标记是否为参数模式
+    is_param_mode=0
     if [ $# -gt 0 ]; then
-        is_param_mode=1  # 有参数时进入参数模式
-        # 循环执行所有参数对应的函数
+        is_param_mode=1
         for func in "$@"; do
-            # 检查函数是否存在
             if declare -F "$func" >/dev/null 2>&1; then
-                $func  # 执行函数
+                $func
             else
                 _red "错误：函数 '$func' 不存在"
                 exit 1
@@ -971,7 +1100,6 @@ selfrun(){
         exit 0
     fi
     
-    #交互运行,判断配置文件是否存在或是否是真实函数
     if [ -z "$(cat $installdir/config/lastfun)" ]; then
         main
     else
@@ -984,6 +1112,3 @@ loadfilefun
 exceptionfun
 selfversionfun
 selfrun
-
-
-
