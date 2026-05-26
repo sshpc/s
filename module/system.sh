@@ -485,10 +485,439 @@ systemfun() {
     
     #计划任务crontab
     crontabfun() {
-        crontab -e
-        service cron reload
+        crontabview() {
+            echo
+            _blue "当前用户的 crontab 任务:"
+            echo
+            crontab -l 2>/dev/null || _yellow "(无任务)"
+            echo
+            _blue "系统级定时任务 (/etc/crontab):"
+            echo
+            grep -v '^#' /etc/crontab 2>/dev/null | grep -v '^$' || _yellow "(无)"
+        }
 
+        crontabadd() {
+            echo
+            _yellow "常用示例:"
+            echo "  0 2 * * * /root/backup.sh        (每天凌晨2点)"
+            echo "  */5 * * * * /root/check.sh        (每5分钟)"
+            echo "  0 0 * * 0 /root/clean.sh          (每周日)"
+            echo "  0 9 1 * * /root/report.sh         (每月1号9点)"
+            echo
+            read -ep "请输入完整的cron表达式和命令: " cronline
+            [[ -z "$cronline" ]] && { _yellow "已取消"; return; }
+            (crontab -l 2>/dev/null; echo "$cronline") | crontab -
+            _green "已添加: $cronline"
+            echo
+            _blue "当前任务列表:"
+            crontab -l
+        }
+
+        crontabdel() {
+            echo
+            local lines=()
+            while IFS= read -r line; do
+                lines+=("$line")
+            done < <(crontab -l 2>/dev/null)
+
+            if [[ ${#lines[@]} -eq 0 ]]; then
+                _yellow "当前没有定时任务"
+                return
+            fi
+
+            _blue "当前定时任务:"
+            for i in "${!lines[@]}"; do
+                printf "  %d) %s\n" "$((i+1))" "${lines[$i]}"
+            done
+            echo
+            read -ep "请输入要删除的序号 (多个用空格分隔, 回车取消): " choices
+            [[ -z "$choices" ]] && { _yellow "已取消"; return; }
+
+            local to_delete=()
+            for c in $choices; do
+                if [[ "$c" =~ ^[0-9]+$ ]] && (( c >= 1 && c <= ${#lines[@]} )); then
+                    to_delete+=("$((c-1))")
+                else
+                    _red "无效序号: $c"
+                fi
+            done
+
+            if [[ ${#to_delete[@]} -eq 0 ]]; then
+                _red "没有有效的删除项"
+                return
+            fi
+
+            local new_crontab=()
+            for i in "${!lines[@]}"; do
+                local skip=0
+                for d in "${to_delete[@]}"; do
+                    [[ "$i" == "$d" ]] && skip=1 && break
+                done
+                [[ $skip -eq 0 ]] && new_crontab+=("${lines[$i]}")
+            done
+
+            printf '%s\n' "${new_crontab[@]}" | crontab -
+            _green "已删除 ${#to_delete[@]} 条任务"
+            echo
+            _blue "剩余任务:"
+            crontab -l 2>/dev/null || _yellow "(无)"
+        }
+
+        menuname='首页/系统/crontab管理'
+        options=("查看定时任务" crontabview "添加定时任务" crontabadd "删除定时任务" crontabdel)
+        menu "${options[@]}"
     }
+
+    servicemanagefun() {
+        servicelistfun() {
+            echo
+            local filter="$1"
+            local cmd="systemctl list-units --type=service --all --no-legend --no-pager"
+            [[ "$filter" == "running" ]] && cmd="systemctl list-units --type=service --state=running --no-legend --no-pager"
+            [[ "$filter" == "enabled" ]] && cmd="systemctl list-unit-files --type=service --state=enabled --no-legend --no-pager"
+
+            local services=()
+            while IFS= read -r line; do
+                [[ -z "$line" ]] && continue
+                local name=$(echo "$line" | awk '{print $1}')
+                local active=$(echo "$line" | awk '{print $3}')
+                services+=("$name|$active")
+            done < <(eval "$cmd" 2>/dev/null)
+
+            if [[ ${#services[@]} -eq 0 ]]; then
+                _yellow "没有找到服务"
+                return 1
+            fi
+
+            printf "%-5s %-45s %-10s\n" "序号" "服务名" "状态"
+            printf "%-5s %-45s %-10s\n" "-----" "---------------------------------------------" "----------"
+            for i in "${!services[@]}"; do
+                local name="${services[$i]%%|*}"
+                local active="${services[$i]##*|}"
+                local color=""
+                [[ "$active" == "active" ]] && color="\033[32m" || color="\033[31m"
+                printf "%-5d %-45s ${color}%-10s\033[0m\n" "$((i+1))" "$name" "$active"
+            done
+
+            echo
+            echo "${services[@]}" > /tmp/.s_services_list
+        }
+
+        serviceactionfun() {
+            local action="$1"
+            local action_cn="$2"
+            servicelistfun "all"
+            [[ ! -f /tmp/.s_services_list ]] && return
+
+            local services_str
+            services_str=$(cat /tmp/.s_services_list)
+            local services_arr=($services_str)
+            rm -f /tmp/.s_services_list
+
+            echo
+            read -ep "请输入服务序号 (多个用空格分隔): " choices
+            [[ -z "$choices" ]] && { _yellow "已取消"; return; }
+
+            for c in $choices; do
+                if [[ "$c" =~ ^[0-9]+$ ]] && (( c >= 1 && c <= ${#services_arr[@]} )); then
+                    local svc="${services_arr[$((c-1))]%%|*}"
+                    _blue "${action_cn}服务: $svc"
+                    systemctl "$action" "$svc" 2>&1
+                    if [[ $? -eq 0 ]]; then
+                        _green "$svc ${action_cn}成功"
+                    else
+                        _red "$svc ${action_cn}失败"
+                    fi
+                else
+                    _red "无效序号: $c"
+                fi
+            done
+        }
+
+        servicedetailfun() {
+            servicelistfun "all"
+            [[ ! -f /tmp/.s_services_list ]] && return
+
+            local services_str
+            services_str=$(cat /tmp/.s_services_list)
+            local services_arr=($services_str)
+            rm -f /tmp/.s_services_list
+
+            echo
+            read -ep "请输入服务序号查看详细: " choice
+            [[ -z "$choice" ]] && return
+
+            if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= ${#services_arr[@]} )); then
+                local svc="${services_arr[$((choice-1))]%%|*}"
+                echo
+                systemctl status "$svc" --no-pager
+            else
+                _red "无效序号"
+            fi
+        }
+
+        serviceenablesel() {
+            serviceactionfun "enable" "启用自启"
+        }
+
+        servicedisablesel() {
+            serviceactionfun "disable" "禁用自启"
+        }
+
+        menuname='首页/系统/服务管理'
+        runningservices() { servicelistfun "running"; }
+        allservices() { servicelistfun "all"; }
+        startservicesel() { serviceactionfun "start" "启动"; }
+        stopservicesel() { serviceactionfun "stop" "停止"; }
+        restartservicesel() { serviceactionfun "restart" "重启"; }
+        options=("查看运行中的服务" runningservices "查看全部服务" allservices "启动服务" startservicesel "停止服务" stopservicesel "重启服务" restartservicesel "查看服务详情" servicedetailfun "设为开机自启" serviceenablesel "取消开机自启" servicedisablesel)
+        menu "${options[@]}"
+    }
+
+    sshconfigfun() {
+        sshshowconfig() {
+            echo
+            _blue "当前 SSH 配置:"
+            echo
+            local port=$(grep -E '^Port\s' /etc/ssh/sshd_config 2>/dev/null | awk '{print $2}')
+            local permit_root=$(grep -E '^PermitRootLogin\s' /etc/ssh/sshd_config 2>/dev/null | awk '{print $2}')
+            local pass_auth=$(grep -E '^PasswordAuthentication\s' /etc/ssh/sshd_config 2>/dev/null | awk '{print $2}')
+            local pubkey_auth=$(grep -E '^PubkeyAuthentication\s' /etc/ssh/sshd_config 2>/dev/null | awk '{print $2}')
+
+            echo "  端口:           ${port:-22 (默认)}"
+            echo "  允许Root登录:   ${permit_root:-yes (默认)}"
+            echo "  密码认证:       ${pass_auth:-yes (默认)}"
+            echo "  公钥认证:       ${pubkey_auth:-yes (默认)}"
+            echo
+            _blue "已配置的公钥数量: $(wc -l < /root/.ssh/authorized_keys 2>/dev/null || echo 0)"
+        }
+
+        sshchangeport() {
+            read -ep "请输入新SSH端口 (1-65535): " newport
+            [[ -z "$newport" ]] && { _yellow "已取消"; return; }
+            if ! [[ "$newport" =~ ^[0-9]+$ ]] || (( newport < 1 || newport > 65535 )); then
+                _red "无效端口"
+                return
+            fi
+            cp /etc/ssh/sshd_config /etc/ssh/sshd_config.bak."$(date +%Y%m%d%H%M%S)"
+            sed -i '/^Port /d' /etc/ssh/sshd_config
+            echo "Port $newport" >> /etc/ssh/sshd_config
+            systemctl restart sshd
+            _green "SSH端口已修改为 $newport (已重启sshd)"
+        }
+
+        sshtoggleroot() {
+            local current=$(grep -E '^PermitRootLogin\s' /etc/ssh/sshd_config 2>/dev/null | awk '{print $2}')
+            [[ "$current" == "no" ]] && local newval="yes" || local newval="no"
+            cp /etc/ssh/sshd_config /etc/ssh/sshd_config.bak."$(date +%Y%m%d%H%M%S)"
+            sed -i '/^PermitRootLogin /d' /etc/ssh/sshd_config
+            echo "PermitRootLogin $newval" >> /etc/ssh/sshd_config
+            systemctl restart sshd
+            _green "Root登录已设置为: $newval"
+        }
+
+        sshtogglepass() {
+            local current=$(grep -E '^PasswordAuthentication\s' /etc/ssh/sshd_config 2>/dev/null | awk '{print $2}')
+            [[ "$current" == "no" ]] && local newval="yes" || local newval="no"
+            cp /etc/ssh/sshd_config /etc/ssh/sshd_config.bak."$(date +%Y%m%d%H%M%S)"
+            sed -i '/^PasswordAuthentication /d' /etc/ssh/sshd_config
+            echo "PasswordAuthentication $newval" >> /etc/ssh/sshd_config
+            systemctl restart sshd
+            _green "密码认证已设置为: $newval"
+        }
+
+        sshkeyonly() {
+            _red "将启用仅密钥登录 (禁用密码+允许Root)"
+            waitinput
+            cp /etc/ssh/sshd_config /etc/ssh/sshd_config.bak."$(date +%Y%m%d%H%M%S)"
+            sed -i '/^PermitRootLogin /d; /^PasswordAuthentication /d; /^PubkeyAuthentication /d' /etc/ssh/sshd_config
+            echo "PermitRootLogin yes" >> /etc/ssh/sshd_config
+            echo "PasswordAuthentication no" >> /etc/ssh/sshd_config
+            echo "PubkeyAuthentication yes" >> /etc/ssh/sshd_config
+            systemctl restart sshd
+            _green "已启用仅密钥登录模式"
+            _yellow "请确保已配置公钥，否则将无法登录！"
+        }
+
+        menuname='首页/系统/SSH配置'
+        options=("查看SSH配置" sshshowconfig "修改SSH端口" sshchangeport "切换Root登录" sshtoggleroot "切换密码认证" sshtogglepass "仅密钥登录(推荐)" sshkeyonly "生成密钥对" sshgetpub "写入公钥" sshsetpub "查看公钥" catkeys "仅密钥root(快捷)" sshpubonly)
+        menu "${options[@]}"
+    }
+
+    usermanagefun() {
+        userlist() {
+            echo
+            _blue "系统用户列表:"
+            echo
+            printf "%-15s %-8s %-25s %-20s\n" "用户名" "UID" "HOME" "SHELL"
+            printf "%-15s %-8s %-25s %-20s\n" "---------------" "--------" "-------------------------" "--------------------"
+            while IFS=: read -r user _ uid _ _ home shell; do
+                if (( uid >= 1000 )) || [[ "$user" == "root" ]]; then
+                    printf "%-15s %-8d %-25s %-20s\n" "$user" "$uid" "$home" "$shell"
+                fi
+            done < /etc/passwd
+            echo
+            _blue "有sudo权限的用户:"
+            grep -E '^sudo:|^wheel:' /etc/group 2>/dev/null | awk -F: '{print "  " $4}'
+        }
+
+        useraddfun() {
+            read -ep "请输入新用户名: " username
+            [[ -z "$username" ]] && { _yellow "已取消"; return; }
+            if id "$username" &>/dev/null; then
+                _red "用户 $username 已存在"
+                return
+            fi
+            read -ep "是否添加sudo权限? (y/n, 默认n): " withsudo
+            useradd -m -s /bin/bash "$username"
+            passwd "$username"
+            if [[ "$withsudo" == "y" ]]; then
+                usermod -aG sudo "$username" 2>/dev/null || usermod -aG wheel "$username" 2>/dev/null
+                _green "用户 $username 已添加sudo权限"
+            fi
+            _green "用户 $username 创建成功"
+        }
+
+        userdelfun() {
+            userlist
+            echo
+            read -ep "请输入要删除的用户名: " username
+            [[ -z "$username" ]] && { _yellow "已取消"; return; }
+            if [[ "$username" == "root" ]]; then
+                _red "不能删除root用户"
+                return
+            fi
+            if ! id "$username" &>/dev/null; then
+                _red "用户 $username 不存在"
+                return
+            fi
+            read -ep "是否同时删除家目录? (y/n, 默认y): " delhome
+            if [[ "$delhome" != "n" ]]; then
+                userdel -r "$username"
+            else
+                userdel "$username"
+            fi
+            _green "用户 $username 已删除"
+        }
+
+        userpassfun() {
+            read -ep "请输入用户名: " username
+            [[ -z "$username" ]] && { _yellow "已取消"; return; }
+            if ! id "$username" &>/dev/null; then
+                _red "用户 $username 不存在"
+                return
+            fi
+            passwd "$username"
+        }
+
+        useraddsudo() {
+            userlist
+            echo
+            read -ep "请输入要添加sudo权限的用户名: " username
+            [[ -z "$username" ]] && { _yellow "已取消"; return; }
+            usermod -aG sudo "$username" 2>/dev/null || usermod -aG wheel "$username" 2>/dev/null
+            _green "已为 $username 添加sudo权限"
+        }
+
+        userdelsudo() {
+            read -ep "请输入要移除sudo权限的用户名: " username
+            [[ -z "$username" ]] && { _yellow "已取消"; return; }
+            gpasswd -d "$username" sudo 2>/dev/null || gpasswd -d "$username" wheel 2>/dev/null
+            _green "已移除 $username 的sudo权限"
+        }
+
+        menuname='首页/系统/用户管理'
+        options=("查看用户列表" userlist "创建用户" useraddfun "删除用户" userdelfun "修改密码" userpassfun "添加sudo权限" useraddsudo "移除sudo权限" userdelsudo)
+        menu "${options[@]}"
+    }
+
+    envmanagefun() {
+        envshow() {
+            echo
+            _blue "当前 Shell 环境变量 (PATH):"
+            echo "$PATH" | tr ':' '\n' | while read -r p; do
+                [[ -n "$p" ]] && echo "  $p"
+            done
+            echo
+            _blue "/etc/environment:"
+            cat /etc/environment 2>/dev/null || _yellow "(文件不存在)"
+            echo
+            _blue "/etc/profile.d/*.sh 自定义环境变量:"
+            ls /etc/profile.d/*.sh 2>/dev/null | while read -r f; do
+                echo "  --- $f ---"
+                grep -v '^#' "$f" | grep -v '^$' | sed 's/^/    /'
+            done
+        }
+
+        envaddpath() {
+            read -ep "请输入要添加到PATH的目录路径: " newpath
+            [[ -z "$newpath" ]] && { _yellow "已取消"; return; }
+            if [[ ! -d "$newpath" ]]; then
+                _red "目录 $newpath 不存在"
+                return
+            fi
+            if echo "$PATH" | grep -q "$newpath"; then
+                _yellow "$newpath 已在PATH中"
+                return
+            fi
+            echo "export PATH=\"$newpath:\$PATH\"" >> /etc/profile.d/custom-path.sh
+            export PATH="$newpath:$PATH"
+            _green "已添加 $newpath 到PATH (持久化到 /etc/profile.d/custom-path.sh)"
+        }
+
+        envaddvar() {
+            read -ep "请输入变量名: " varname
+            [[ -z "$varname" ]] && { _yellow "已取消"; return; }
+            read -ep "请输入变量值: " varvalue
+            echo "export $varname=\"$varvalue\"" >> /etc/profile.d/custom-env.sh
+            export "$varname=$varvalue"
+            _green "已添加环境变量 $varname=$varvalue"
+        }
+
+        envdelvar() {
+            _blue "自定义环境变量文件:"
+            echo "  1) /etc/profile.d/custom-path.sh"
+            echo "  2) /etc/profile.d/custom-env.sh"
+            echo
+            read -ep "选择文件 (1/2): " fchoice
+            local target=""
+            [[ "$fchoice" == "1" ]] && target="/etc/profile.d/custom-path.sh"
+            [[ "$fchoice" == "2" ]] && target="/etc/profile.d/custom-env.sh"
+            [[ -z "$target" ]] && { _yellow "已取消"; return; }
+            if [[ ! -f "$target" ]]; then
+                _yellow "文件不存在"
+                return
+            fi
+            echo
+            local lines=()
+            while IFS= read -r line; do
+                lines+=("$line")
+            done < "$target"
+
+            if [[ ${#lines[@]} -eq 0 ]]; then
+                _yellow "文件为空"
+                return
+            fi
+
+            for i in "${!lines[@]}"; do
+                printf "  %d) %s\n" "$((i+1))" "${lines[$i]}"
+            done
+            echo
+            read -ep "请输入要删除的行序号: " delidx
+            if [[ "$delidx" =~ ^[0-9]+$ ]] && (( delidx >= 1 && delidx <= ${#lines[@]} )); then
+                unset 'lines['"$((delidx-1))"']'
+                printf '%s\n' "${lines[@]}" > "$target"
+                _green "已删除"
+            else
+                _red "无效序号"
+            fi
+        }
+
+        menuname='首页/系统/环境变量'
+        options=("查看环境变量" envshow "添加PATH路径" envaddpath "添加环境变量" envaddvar "删除环境变量" envdelvar)
+        menu "${options[@]}"
+    }
+
     #配置开机运行脚本 rc.local
     rclocalfun() {
         _blue '添加类似  nohup ... >> xxx.log 2>&1 &  最后行加 exit 0 '
@@ -853,7 +1282,7 @@ systemfun() {
 
     menuname='首页/系统'
     echo "systemfun" >$installdir/config/lastfun
-    options=("系统信息" sysinfo "进程查询" processquery "最新10个启动的服务" upservicetime "setauthorized_keys写入ssh公钥" sshsetpub "rootsshkeypubonly仅密钥root" sshpubonly "synctime同步时间" synchronization_time "sshgetpub生成密钥对" sshgetpub "catauthorized_keys查看公钥" catkeys "crontab计划任务" crontabfun "swap管理" swapfun "rclocal配置" rclocalfun "自定义服务" customservicefun "系统检查" systemcheck "修改主机名" updateservername "清理系统日志" cleansyslogs)
+    options=("系统信息" sysinfo "进程查询" processquery "最新10个启动的服务" upservicetime "服务管理" servicemanagefun "SSH配置管理" sshconfigfun "用户管理" usermanagefun "环境变量管理" envmanagefun "synctime同步时间" synchronization_time "crontab管理" crontabfun "swap管理" swapfun "rclocal配置" rclocalfun "自定义服务" customservicefun "系统检查" systemcheck "修改主机名" updateservername "清理系统日志" cleansyslogs)
 
     menu "${options[@]}"
 

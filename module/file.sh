@@ -162,9 +162,156 @@ filefun() {
         echo "$abpath 目录下的 后缀为 $suffix 文件的总行数是: $total"
     }
 
+    filesearchfun() {
+        searchbyname() {
+            read -ep "请输入搜索路径 (默认当前目录): " searchpath
+            searchpath=${searchpath:-.}
+            read -ep "请输入文件名关键词: " keyword
+            [[ -z "$keyword" ]] && { _yellow "已取消"; return; }
+
+            echo
+            _blue "搜索结果: $searchpath 下包含 '$keyword' 的文件"
+            echo
+
+            local files=()
+            while IFS= read -r -d '' f; do
+                files+=("$f")
+            done < <(find "$searchpath" -name "*$keyword*" -print0 2>/dev/null)
+
+            if [[ ${#files[@]} -eq 0 ]]; then
+                _yellow "未找到匹配文件"
+                return
+            fi
+
+            printf "%-5s %-10s %-20s %s\n" "序号" "大小" "修改时间" "路径"
+            printf "%-5s %-10s %-20s %s\n" "-----" "----------" "--------------------" "----"
+            for i in "${!files[@]}"; do
+                local size=$(du -h "${files[$i]}" 2>/dev/null | awk '{print $1}')
+                local mtime=$(stat -c '%Y-%m-%d %H:%M' "${files[$i]}" 2>/dev/null)
+                printf "%-5d %-10s %-20s %s\n" "$((i+1))" "$size" "$mtime" "${files[$i]}"
+            done
+
+            echo
+            read -ep "操作: 1)查看 2)删除 3)移动 0)取消: " action
+            case "$action" in
+                1)
+                    read -ep "请输入序号: " idx
+                    if [[ "$idx" =~ ^[0-9]+$ ]] && (( idx >= 1 && idx <= ${#files[@]} )); then
+                        echo
+                        if file "${files[$((idx-1))]}" | grep -q "text"; then
+                            less "${files[$((idx-1))]}"
+                        else
+                            file "${files[$((idx-1))]}"
+                            ls -lh "${files[$((idx-1))]}"
+                        fi
+                    fi
+                    ;;
+                2)
+                    read -ep "请输入要删除的序号 (多个空格分隔): " dels
+                    for d in $dels; do
+                        if [[ "$d" =~ ^[0-9]+$ ]] && (( d >= 1 && d <= ${#files[@]} )); then
+                            rm -f "${files[$((d-1))]}"
+                            _green "已删除: ${files[$((d-1))]}"
+                        fi
+                    done
+                    ;;
+                3)
+                    read -ep "请输入文件序号: " fidx
+                    read -ep "请输入目标目录: " destdir
+                    if [[ "$fidx" =~ ^[0-9]+$ ]] && (( fidx >= 1 && fidx <= ${#files[@]} )) && [[ -d "$destdir" ]]; then
+                        mv "${files[$((fidx-1))]}" "$destdir/"
+                        _green "已移动到 $destdir/"
+                    else
+                        _red "无效输入"
+                    fi
+                    ;;
+                *) ;;
+            esac
+        }
+
+        searchbysize() {
+            read -ep "请输入搜索路径 (默认当前目录): " searchpath
+            searchpath=${searchpath:-.}
+            echo "大小选项: +100M  +1G  +10G  -1M  ..."
+            read -ep "请输入大小条件 (如 +100M 表示大于100M): " sizecond
+            [[ -z "$sizecond" ]] && { _yellow "已取消"; return; }
+
+            echo
+            _blue "搜索结果: $searchpath 下大小 $sizecond 的文件"
+            echo
+
+            local files=()
+            while IFS= read -r -d '' f; do
+                files+=("$f")
+            done < <(find "$searchpath" -type f -size "$sizecond" -print0 2>/dev/null)
+
+            if [[ ${#files[@]} -eq 0 ]]; then
+                _yellow "未找到匹配文件"
+                return
+            fi
+
+            printf "%-5s %-10s %-20s %s\n" "序号" "大小" "修改时间" "路径"
+            printf "%-5s %-10s %-20s %s\n" "-----" "----------" "--------------------" "----"
+            for i in "${!files[@]}"; do
+                local size=$(du -h "${files[$i]}" 2>/dev/null | awk '{print $1}')
+                local mtime=$(stat -c '%Y-%m-%d %H:%M' "${files[$i]}" 2>/dev/null)
+                printf "%-5d %-10s %-20s %s\n" "$((i+1))" "$size" "$mtime" "${files[$i]}"
+            done
+        }
+
+        searchbytime() {
+            read -ep "请输入搜索路径 (默认当前目录): " searchpath
+            searchpath=${searchpath:-.}
+            echo "时间选项:"
+            echo "  1) 最近1天内修改"
+            echo "  2) 最近7天内修改"
+            echo "  3) 最近30天内修改"
+            echo "  4) 最近60分钟内修改"
+            read -ep "请选择: " timeopt
+
+            local findtime=""
+            case "$timeopt" in
+                1) findtime="-mtime -1" ;;
+                2) findtime="-mtime -7" ;;
+                3) findtime="-mtime -30" ;;
+                4) findtime="-mmin -60" ;;
+                *) _yellow "已取消"; return ;;
+            esac
+
+            echo
+            _blue "搜索结果:"
+            echo
+
+            local files=()
+            while IFS= read -r -d '' f; do
+                files+=("$f")
+            done < <(eval "find '$searchpath' -type f $findtime -print0" 2>/dev/null)
+
+            if [[ ${#files[@]} -eq 0 ]]; then
+                _yellow "未找到匹配文件"
+                return
+            fi
+
+            _yellow "找到 ${#files[@]} 个文件，显示前50个:"
+            echo
+            printf "%-5s %-10s %-20s %s\n" "序号" "大小" "修改时间" "路径"
+            printf "%-5s %-10s %-20s %s\n" "-----" "----------" "--------------------" "----"
+            local show=$((${#files[@]} > 50 ? 50 : ${#files[@]}))
+            for ((i=0; i<show; i++)); do
+                local size=$(du -h "${files[$i]}" 2>/dev/null | awk '{print $1}')
+                local mtime=$(stat -c '%Y-%m-%d %H:%M' "${files[$i]}" 2>/dev/null)
+                printf "%-5d %-10s %-20s %s\n" "$((i+1))" "$size" "$mtime" "${files[$i]}"
+            done
+        }
+
+        menuname='首页/文件管理/文件搜索'
+        options=("按名称搜索" searchbyname "按大小搜索" searchbysize "按时间搜索" searchbytime)
+        menu "${options[@]}"
+    }
+
     menuname='首页/文件管理'
     echo "filefun" >$installdir/config/lastfun
-    options=("打包压缩目录" packagingdir "解压缩目录" uncompresseddir  "配置目录权限www-data" chownwwwdata "统计当前目录占用" statisticsusage  "统计目录文件行数" countfileslines "多线程下载" aria2fun )
+    options=("打包压缩目录" packagingdir "解压缩目录" uncompresseddir  "配置目录权限www-data" chownwwwdata "文件搜索" filesearchfun "统计当前目录占用" statisticsusage  "统计目录文件行数" countfileslines "多线程下载" aria2fun )
 
     menu "${options[@]}"
 

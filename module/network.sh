@@ -783,7 +783,6 @@ EOF
 
     #切换TCP拥塞控制
     switchTCPctrl(){
-
         tcpcc=$(sysctl net.ipv4.tcp_congestion_control | awk -F ' ' '{print $3}')
 
         beforeMenu(){
@@ -796,39 +795,28 @@ EOF
         }
 
         tcpccbbr() {
-            # 检查是否为root权限（修改sysctl.conf需要）
             [[ $EUID -ne 0 ]] && { echo "错误：需要root权限，请使用sudo执行"; return 1; }
-            
-            # 替换或添加配置（避免重复写入）
-            # 处理默认队列管理算法
             if grep -q "^net.core.default_qdisc" /etc/sysctl.conf; then
                 sed -i 's/^net.core.default_qdisc=.*/net.core.default_qdisc=fq/' /etc/sysctl.conf
             else
                 echo "net.core.default_qdisc=fq" >> /etc/sysctl.conf
             fi
-            # 处理拥塞控制算法
             if grep -q "^net.ipv4.tcp_congestion_control" /etc/sysctl.conf; then
                 sed -i 's/^net.ipv4.tcp_congestion_control=.*/net.ipv4.tcp_congestion_control=bbr/' /etc/sysctl.conf
             else
                 echo "net.ipv4.tcp_congestion_control=bbr" >> /etc/sysctl.conf
             fi
             sysctl -p
-
             _blue "已设置TCP拥塞控制为BBR"
-            
         }
 
         tcpcccubic() {
             [[ $EUID -ne 0 ]] && { echo "错误：需要root权限，请使用sudo执行"; return 1; }
-            
-            
-            # 处理默认队列管理算法（CUBIC也可搭配fq，或根据需求调整为pfifo_fast）
             if grep -q "^net.core.default_qdisc" /etc/sysctl.conf; then
                 sed -i 's/^net.core.default_qdisc=.*/net.core.default_qdisc=fq/' /etc/sysctl.conf
             else
                 echo "net.core.default_qdisc=fq" >> /etc/sysctl.conf
             fi
-            # 处理拥塞控制算法
             if grep -q "^net.ipv4.tcp_congestion_control" /etc/sysctl.conf; then
                 sed -i 's/^net.ipv4.tcp_congestion_control=.*/net.ipv4.tcp_congestion_control=cubic/' /etc/sysctl.conf
             else
@@ -836,19 +824,172 @@ EOF
             fi
             sysctl -p
             _blue "已设置TCP拥塞控制为CUBIC"
-            
         }
-        
 
         menuname='首页/网络/切换TCP拥塞控制'
         options=("切换成bbr" tcpccbbr "切换成cubic" tcpcccubic )
         menu "${options[@]}"
+    }
 
+    iptablesfun() {
+        iptshow() {
+            echo
+            _blue "===== iptables INPUT 规则 ====="
+            echo
+            iptables -L INPUT -n -v --line-numbers 2>/dev/null
+            echo
+            _blue "===== iptables FORWARD 规则 ====="
+            echo
+            iptables -L FORWARD -n -v --line-numbers 2>/dev/null
+            echo
+            _blue "===== iptables NAT 规则 ====="
+            echo
+            iptables -t nat -L -n -v --line-numbers 2>/dev/null
+        }
+
+        iptallowport() {
+            read -ep "请输入放行端口: " port
+            [[ -z "$port" ]] && { _yellow "已取消"; return; }
+            echo "协议: 1)tcp  2)udp  3)tcp+udp"
+            read -ep "请选择 (默认1): " proto
+            case "$proto" in
+                2) iptables -I INPUT -p udp --dport "$port" -j ACCEPT; _green "已放行 UDP $port" ;;
+                3) iptables -I INPUT -p tcp --dport "$port" -j ACCEPT
+                   iptables -I INPUT -p udp --dport "$port" -j ACCEPT
+                   _green "已放行 TCP+UDP $port" ;;
+                *) iptables -I INPUT -p tcp --dport "$port" -j ACCEPT; _green "已放行 TCP $port" ;;
+            esac
+        }
+
+        iptblockport() {
+            read -ep "请输入拦截端口: " port
+            [[ -z "$port" ]] && { _yellow "已取消"; return; }
+            iptables -I INPUT -p tcp --dport "$port" -j DROP
+            iptables -I INPUT -p udp --dport "$port" -j DROP
+            _green "已拦截 TCP+UDP $port"
+        }
+
+        iptblockip() {
+            read -ep "请输入要封禁的IP: " ip
+            [[ -z "$ip" ]] && { _yellow "已取消"; return; }
+            iptables -I INPUT -s "$ip" -j DROP
+            _green "已封禁 $ip"
+        }
+
+        iptallowip() {
+            read -ep "请输入要放行的IP: " ip
+            [[ -z "$ip" ]] && { _yellow "已取消"; return; }
+            iptables -I INPUT -s "$ip" -j ACCEPT
+            _green "已放行 $ip"
+        }
+
+        iptdelrule() {
+            echo
+            _blue "当前 INPUT 规则:"
+            iptables -L INPUT -n --line-numbers
+            echo
+            read -ep "请输入要删除的规则序号: " rulenum
+            [[ -z "$rulenum" ]] && { _yellow "已取消"; return; }
+            if ! [[ "$rulenum" =~ ^[0-9]+$ ]]; then
+                _red "无效序号"
+                return
+            fi
+            iptables -D INPUT "$rulenum"
+            _green "已删除规则 #$rulenum"
+            echo
+            _blue "当前 INPUT 规则:"
+            iptables -L INPUT -n --line-numbers
+        }
+
+        iptflush() {
+            _red "警告: 将清空所有 iptables 规则！"
+            read -ep "确认清空? (y/n, 默认n): " confirm
+            [[ "$confirm" != "y" ]] && { _yellow "已取消"; return; }
+            iptables -F
+            iptables -t nat -F
+            iptables -X
+            _green "已清空所有规则"
+        }
+
+        iptsaverules() {
+            local savefile="/root/iptables-rules.bak.$(date +%Y%m%d%H%M%S)"
+            iptables-save > "$savefile"
+            _green "规则已保存到 $savefile"
+        }
+
+        iptrestorerules() {
+            echo
+            _blue "已保存的规则文件:"
+            local files=()
+            while IFS= read -r f; do
+                files+=("$f")
+            done < <(ls -t /root/iptables-rules.bak.* 2>/dev/null)
+
+            if [[ ${#files[@]} -eq 0 ]]; then
+                _yellow "没有找到备份文件"
+                return
+            fi
+
+            for i in "${!files[@]}"; do
+                printf "  %d) %s\n" "$((i+1))" "${files[$i]}"
+            done
+            echo
+            read -ep "请选择要恢复的文件序号: " choice
+            if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= ${#files[@]} )); then
+                _red "将替换当前所有规则！"
+                read -ep "确认? (y/n, 默认n): " confirm
+                [[ "$confirm" != "y" ]] && { _yellow "已取消"; return; }
+                iptables-restore < "${files[$((choice-1))]}"
+                _green "规则已恢复"
+            else
+                _red "无效序号"
+            fi
+        }
+
+        iptdefaultdeny() {
+            _red "将设置默认策略: INPUT DROP, FORWARD DROP, OUTPUT ACCEPT"
+            _red "确保SSH端口已放行，否则会断开连接！"
+            read -ep "确认? (y/n, 默认n): " confirm
+            [[ "$confirm" != "y" ]] && { _yellow "已取消"; return; }
+            iptables -P INPUT DROP
+            iptables -P FORWARD DROP
+            iptables -P OUTPUT ACCEPT
+            iptables -A INPUT -i lo -j ACCEPT
+            iptables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+            _green "默认策略已设置 (已自动放行回环和已建立连接)"
+        }
+
+        iptsshguard() {
+            echo
+            read -ep "SSH端口 (默认22): " sshport
+            sshport=${sshport:-22}
+            read -ep "最大尝试次数 (默认5): " maxretry
+            maxretry=${maxretry:-5}
+            read -ep "封禁时间秒数 (默认3600): " bantime
+            bantime=${bantime:-3600}
+
+            iptables -I INPUT -p tcp --dport "$sshport" -m state --state NEW -m recent --set --name SSH
+            iptables -I INPUT -p tcp --dport "$sshport" -m state --state NEW -m recent --update --seconds "$bantime" --hitcount "$maxretry" --name SSH -j DROP
+            _green "SSH防暴力破解已启用 (端口:$sshport ${maxretry}次/${bantime}秒)"
+        }
+
+        iptconnectionlimit() {
+            read -ep "请输入限制的端口: " port
+            [[ -z "$port" ]] && { _yellow "已取消"; return; }
+            read -ep "最大并发连接数 (默认100): " maxconn
+            maxconn=${maxconn:-100}
+            iptables -A INPUT -p tcp --dport "$port" -m connlimit --connlimit-above "$maxconn" -j REJECT
+            _green "端口 $port 并发连接限制为 $maxconn"
+        }
+
+        menuname='首页/网络/iptables管理'
+        options=("查看全部规则" iptshow "放行端口" iptallowport "拦截端口" iptblockport "放行IP" iptallowip "封禁IP" iptblockip "删除规则(序号)" iptdelrule "SSH防暴力破解" iptsshguard "端口并发限制" iptconnectionlimit "默认策略(白名单模式)" iptdefaultdeny "保存规则" iptsaverules "恢复规则" iptrestorerules "清空所有规则" iptflush)
+        menu "${options[@]}"
     }
 
     menuname='首页/网络'
     echo "networkfun" >$installdir/config/lastfun
-    options=("网络信息" netinfo "实时网速" Realtimenetworkspeedfun "外网测速" publicnettest "iperf3打流" iperftest "临时http代理" http_proxy  "配置局域网ip" lanfun "nmap扫描" nmapfun "ufw" ufwfun "fail2ban" fail2banfun  "系统网络配置优化" system_best "端口转发服务" portforward "测试端口延迟" testport "切换TCP拥塞控制" switchTCPctrl)
+    options=("网络信息" netinfo "实时网速" Realtimenetworkspeedfun "外网测速" publicnettest "iperf3打流" iperftest "临时http代理" http_proxy  "配置局域网ip" lanfun "nmap扫描" nmapfun "ufw" ufwfun "fail2ban" fail2banfun  "系统网络配置优化" system_best "端口转发服务" portforward "测试端口延迟" testport "切换TCP拥塞控制" switchTCPctrl "iptables管理" iptablesfun)
 
     menu "${options[@]}"
 
