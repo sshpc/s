@@ -624,6 +624,123 @@ dockerfun() {
     }
 
 
+    catcomposepath() {
+        echo
+        _blue "查询容器对应的 docker-compose 文件位置"
+        echo
+
+        local containers_arr=()
+        while read -r line; do
+            containers_arr+=("$line")
+        done < <(docker ps -a --format '{{.Names}}' 2>/dev/null)
+
+        if [[ ${#containers_arr[@]} -eq 0 ]]; then
+            _yellow "没有容器"
+            return
+        fi
+
+        printf "%-30s %-60s\n" "容器名称" "compose文件路径"
+        printf "%-30s %-60s\n" "------------------------------" "------------------------------------------------------------"
+
+        local unique_paths=()
+        for name in "${containers_arr[@]}"; do
+            [[ -z "$name" ]] && continue
+            local config_files
+            config_files=$(docker inspect "$name" --format '{{index .Config.Labels "com.docker.compose.project.config_files"}}' 2>/dev/null)
+            local working_dir
+            working_dir=$(docker inspect "$name" --format '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' 2>/dev/null)
+
+            local resolved=""
+            if [[ -n "$config_files" ]]; then
+                local IFS=','
+                for f in $config_files; do
+                    f=$(echo "$f" | xargs)
+                    [[ -z "$f" ]] && continue
+                    if [[ "$f" != /* && -n "$working_dir" ]]; then
+                        f="$working_dir/$f"
+                    fi
+                    [[ -n "$resolved" ]] && resolved="$resolved,$f"
+                    [[ -z "$resolved" ]] && resolved="$f"
+                done
+                printf "%-30s %s\n" "$name" "$resolved"
+                IFS=','
+                for f in $resolved; do
+                    unique_paths+=("$(echo "$f" | xargs)")
+                done
+            elif [[ -n "$working_dir" ]]; then
+                printf "%-30s %s/ (无config_files标签)\n" "$name" "$working_dir"
+            else
+                printf "%-30s %s\n" "$name" "(非compose创建)"
+            fi
+        done
+
+        echo
+    }
+
+    catcomposepath_one() {
+        echo
+        _blue "查询单个容器的 compose 文件位置"
+        echo
+
+        local containers_arr=()
+        while read -r line; do
+            containers_arr+=("$line")
+        done < <(docker ps -a --format '{{.Names}}' 2>/dev/null)
+
+        if [[ ${#containers_arr[@]} -eq 0 ]]; then
+            _yellow "没有容器"
+            return
+        fi
+
+        for i in "${!containers_arr[@]}"; do
+            printf "  %d) %s\n" "$((i+1))" "${containers_arr[$i]}"
+        done
+        echo
+
+        read -ep "请输入容器序号 [1-${#containers_arr[@]}], 回车取消: " choice
+        [[ -z "$choice" ]] && { _yellow "已取消"; return; }
+
+        if ! [[ "$choice" =~ ^[0-9]+$ ]] || (( choice < 1 || choice > ${#containers_arr[@]} )); then
+            _red "无效序号"
+            return
+        fi
+
+        local name="${containers_arr[$((choice-1))]}"
+        local config_files
+        config_files=$(docker inspect "$name" --format '{{index .Config.Labels "com.docker.compose.project.config_files"}}' 2>/dev/null)
+        local working_dir
+        working_dir=$(docker inspect "$name" --format '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' 2>/dev/null)
+        local project
+        project=$(docker inspect "$name" --format '{{index .Config.Labels "com.docker.compose.project"}}' 2>/dev/null)
+
+        echo
+        _blue "容器: $name"
+        [[ -n "$project" ]] && echo "  compose项目: $project"
+        [[ -n "$working_dir" ]] && echo "  工作目录:    $working_dir"
+        if [[ -n "$config_files" ]]; then
+            local resolved=""
+            local IFS=','
+            for f in $config_files; do
+                f=$(echo "$f" | xargs)
+                [[ -z "$f" ]] && continue
+                if [[ "$f" != /* && -n "$working_dir" ]]; then
+                    f="$working_dir/$f"
+                fi
+                [[ -n "$resolved" ]] && resolved="$resolved, $f"
+                [[ -z "$resolved" ]] && resolved="$f"
+            done
+            echo "  compose文件:  $resolved"
+        else
+            _yellow "  该容器不是通过 compose 创建的"
+        fi
+    }
+
+    findcomposefun() {
+        menuname='首页/docker/查找compose'
+        options=("查询compose文件(全部)" catcomposepath "查询compose文件(单个)" catcomposepath_one)
+        menu "${options[@]}"
+    }
+
     #其他
     othercommands() {
 
@@ -636,7 +753,7 @@ dockerfun() {
 
     menuname='首页/docker'
     echo "dockerfun" >$installdir/config/lastfun
-    options=("查看状态" dockerstatusfun "重启容器" restartcontainer "安装" composeinstall  "安装(强制构建)" composeinstallbuild "终止" composedown "exec进入容器" dockerexec    "查看compose日志" catcomposelogs "其他" othercommands )
+    options=("查看状态" dockerstatusfun "重启容器" restartcontainer "安装" composeinstall  "安装(强制构建)" composeinstallbuild "终止" composedown "exec进入容器" dockerexec    "查看compose日志" catcomposelogs "其他" othercommands "查找compose" findcomposefun  )
 
     menu "${options[@]}"
 
