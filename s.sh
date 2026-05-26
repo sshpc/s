@@ -39,6 +39,12 @@ next(){
     echo '----------------------------'
 }
 
+dwidth() {
+    local len
+    len=$(echo -n "$1" | wc -L)
+    echo "$len"
+}
+
 #logo
 slogo() {
     _green '# 交互式shell脚本工具'
@@ -595,12 +601,16 @@ staticmenu() {
     local max_len=0
     
     for ((i = 0; i < num_options; i += 1)); do
-        local str_len=${#options[i]}
-        ((str_len > max_len)) && max_len=$str_len
+        local w
+        w=$(dwidth "${options[i]}")
+        ((w > max_len)) && max_len=$w
     done
     
     for ((i = 0; i < num_options; i += 4)); do
-        printf "%s%*s  " "$((i / 2 + 1)): ${options[i]}" "$((max_len - ${#options[i]}))"
+        local w
+        w=$(dwidth "${options[i]}")
+        local pad=$((max_len - w))
+        printf "%s%*s  " "$((i / 2 + 1)): ${options[i]}" "$pad"
         if (( i + 2 < num_options )); then  
             if [[ -n "${options[i + 2]}" ]]; then  
                 printf "$((i / 2 + 2)): ${options[i + 2]}"
@@ -674,15 +684,17 @@ menu() {
     fi
     
     local num_items=$((num_options / 2))
-    local max_len=0
 
+    local max_len=0
+    local widths=()
     for ((i = 0; i < num_options; i += 2)); do
-        local str_len=${#options[i]}
-        ((str_len > max_len)) && max_len=$str_len
+        local w
+        w=$(dwidth "${options[i]}")
+        widths+=("$w")
+        ((w > max_len)) && max_len=$w
     done
 
     local seq_width=${#num_items}
-
     (( seq_width < 1 )) && seq_width=1
 
     local terminal_width
@@ -708,8 +720,11 @@ menu() {
             local opt_array_idx=$((current_item_index * 2))
             local desc="${options[opt_array_idx]}"
             local display_num=$((current_item_index + 1))
+            local w=${widths[current_item_index]}
+            local pad=$((max_len - w))
+            local padded="${desc}$(printf '%*s' "$pad" '')"
             local formatted_item
-            formatted_item=$(printf "%*d: %-*s" "$seq_width" "$display_num" "$max_len" "$desc")
+            formatted_item=$(printf "%*d: %s" "$seq_width" "$display_num" "$padded")
             
             if (( j == 0 )); then
                 line_output="$formatted_item"
