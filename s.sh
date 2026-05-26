@@ -566,7 +566,7 @@ version_manager() {
 
 # ==================== 菜单渲染 ====================
 
-menubak() {
+staticmenu() {
     if [ $is_param_mode -eq 1 ]; then
         return
     fi
@@ -635,8 +635,8 @@ menubak() {
 }
 
 menu() {
-    if [ "$menustyle" = "menubak" ]; then
-        menubak "$@"
+    if [ "$menustyle" = "staticmenu" ]; then
+        staticmenu "$@"
         return
     fi
 
@@ -881,15 +881,15 @@ selfsetting(){
         echo 'menu' >$installdir/config/menustyle
         selfrestart
     }
-    switchmenubak(){
-        echo 'menubak' >$installdir/config/menustyle
+    switchstaticmenu(){
+        echo 'staticmenu' >$installdir/config/menustyle
         selfrestart
     }
     
     menuname='脚本设置'
     echo "selfsetting" >$installdir/config/lastfun
     
-    options=("查看脚本日志" catselfrunlog "版本管理" version_manager "模块管理" module_manager "打开详细执行日志" openexceptionlog "关闭详细执行日志" closeexceptionlog "升级脚本" updateself "菜单样式:现代" switchmenumodern "菜单样式:经典" switchmenubak "卸载脚本" uninstallfun)
+    options=("查看脚本日志" catselfrunlog "版本管理" version_manager "模块管理" module_manager "打开详细执行日志" openexceptionlog "关闭详细执行日志" closeexceptionlog "升级脚本" updateself "设置响应式菜单样式" switchmenumodern "设置静态菜单样式" switchstaticmenu "卸载脚本" uninstallfun)
     menu "${options[@]}"
 }
 
@@ -951,8 +951,8 @@ selfinitfun(){
     mkdir -p "$installdir/bak"
     
     #读取菜单样式
-    if [[ -f "$installdir/config/menustyle" ]] && grep -q '^menubak$' "$installdir/config/menustyle"; then
-        menustyle='menubak'
+    if [[ -f "$installdir/config/menustyle" ]] && grep -q '^staticmenu$' "$installdir/config/menustyle"; then
+        menustyle='staticmenu'
     else
         menustyle='menu'
     fi
