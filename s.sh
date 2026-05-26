@@ -464,7 +464,7 @@ list_backup_versions() {
         local marker=""
         [[ "$ver" == "$selfversion" ]] && marker=" (当前)"
         ((idx++))
-        printf "  %d. v%s%s\n" "$idx" "$ver" "$marker"
+        printf "  %d. %s%s\n" "$idx" "$ver" "$marker"
     done
     [[ $idx -eq 0 ]] && _yellow "暂无备份版本"
 }
@@ -501,34 +501,49 @@ switch_version() {
     _green "已切换到版本 v$target_ver"
 }
 
-# 交互式版本选择
+# 交互式版本选择（数字选择，类似 docker restart）
 version_select() {
     local bakroot="$installdir/bak"
     if [[ ! -d "$bakroot" ]] || [[ -z "$(ls -A "$bakroot" 2>/dev/null)" ]]; then
         _yellow "暂无可切换的备份版本"
         return
     fi
-    
-    list_backup_versions
+
+    local versions=()
+    for vdir in "$bakroot"/*/; do
+        [[ ! -d "$vdir" ]] && continue
+        versions+=("$(basename "$vdir")")
+    done
+
+    if [[ ${#versions[@]} -eq 0 ]]; then
+        _yellow "暂无可切换的备份版本"
+        return
+    fi
+
     echo
-    read -ep "输入版本号切换 (如 1.0.0) 或回车取消: " ver_input
-    [[ -z "$ver_input" ]] && { _yellow "已取消"; return; }
-    
-    local bakdir="$installdir/bak/$ver_input"
-    if [[ ! -d "$bakdir" ]]; then
-        _red "版本 v$ver_input 备份不存在"
+    _blue "选择版本 (输入序号):"
+    echo
+    for i in "${!versions[@]}"; do
+        local marker=""
+        [[ "${versions[$i]}" == "$selfversion" ]] && marker=" (当前)"
+        printf "  %d) %s%s\n" "$((i+1))" "${versions[$i]}" "$marker"
+    done
+    echo
+    read -ep "请输入序号 [1-${#versions[@]}], 回车取消: " choice
+    [[ -z "$choice" ]] && { _yellow "已取消"; return; }
+
+    if ! [[ "$choice" =~ ^[0-9]+$ ]] || (( choice < 1 || choice > ${#versions[@]} )); then
+        _red "无效序号"
         return
     fi
-    
-    if [[ "$ver_input" == "$selfversion" ]]; then
-        _yellow "当前已是 v$ver_input"
+
+    local target_ver="${versions[$((choice-1))]}"
+    if [[ "$target_ver" == "$selfversion" ]]; then
+        _yellow "当前已是 $target_ver"
         return
     fi
-    
-    read -ep "确认切换到 v$ver_input ? (y/n, 默认n): " confirm
-    [[ "$confirm" != "y" ]] && { _yellow "已取消"; return; }
-    
-    switch_version "$ver_input"
+
+    switch_version "$target_ver"
     selfrestart
 }
 
