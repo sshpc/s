@@ -733,6 +733,14 @@ dockerfun() {
         else
             _yellow "  该容器不是通过 compose 创建的"
         fi
+
+        if [[ -n "$working_dir" ]]; then
+            read -ep "是否进入该目录? (y/n, 默认n): " go
+            if [[ "$go" == "y" ]]; then
+                _green "进入 $working_dir (exit退回脚本)"
+                cd "$working_dir" && bash
+            fi
+        fi
     }
 
     findcomposefun() {
