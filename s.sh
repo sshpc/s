@@ -436,7 +436,7 @@ module_manager() {
 }
 
 #菜单渲染
-menu() {
+menubak() {
     if [ $is_param_mode -eq 1 ]; then
         return
     fi
@@ -507,6 +507,114 @@ menu() {
         *)
             backtomain
         ;;
+    esac
+}
+menu() {
+    if [ "$is_param_mode" -eq 1 ]; then
+        return
+    fi
+
+    # 清屏
+    printf "\033[H\033[2J"
+    echo
+
+    # 渲染菜单前 检查是否有beforeMenu函数，执行
+    declare -F beforeMenu >/dev/null 2>&1 && beforeMenu
+
+    local options=("$@")
+    local num_options=${#options[@]}
+    
+    if (( num_options == 0 )); then
+        _blue "没有可用的菜单项"
+        read -p "按回车返回..."
+        return
+    fi
+    
+    local num_items=$((num_options / 2))
+    local max_len=0
+
+    for ((i = 0; i < num_options; i += 2)); do
+        local str_len=${#options[i]}
+        ((str_len > max_len)) && max_len=$str_len
+    done
+
+    local seq_width=${#num_items}
+
+    (( seq_width < 1 )) && seq_width=1
+
+    local terminal_width
+    terminal_width=$(tput cols 2>/dev/null || echo 80)
+
+    local cell_width=$((seq_width + 2 + max_len + 4))
+    local items_per_row=$((terminal_width / cell_width))
+
+    if (( items_per_row < 1 )); then
+        items_per_row=1
+    elif (( items_per_row > 5 )); then
+        items_per_row=5
+    fi
+
+    for ((i = 0; i < num_items; i += items_per_row)); do
+        local line_output=""
+        for ((j = 0; j < items_per_row; j++)); do
+            local current_item_index=$((i + j))
+            if (( current_item_index >= num_items )); then
+                break
+            fi
+
+            local opt_array_idx=$((current_item_index * 2))
+            local desc="${options[opt_array_idx]}"
+            local display_num=$((current_item_index + 1))
+            local formatted_item
+            formatted_item=$(printf "%*d: %-*s" "$seq_width" "$display_num" "$max_len" "$desc")
+            
+            if (( j == 0 )); then
+                line_output="$formatted_item"
+            else
+                line_output="$line_output    $formatted_item"
+            fi
+        done
+        echo "$line_output"
+    done
+    echo
+    _blue "0: 首页 b: 返回 q: 退出 s:脚本设置"
+    echo
+    
+    read -ep "请输入命令号(0-$num_items): " number
+
+    case "$number" in
+        [1-9]|[1-9][0-9]*)
+            if [[ $number -ge 1 && $number -le $num_items ]]; then
+                local action_index=$((2 * (number - 1) + 1))
+                parentfun=${options[action_index]}
+                
+                declare -F slog >/dev/null 2>&1 && slog set runscript "$datevar | $menuname | ${options[action_index]} (${options[action_index - 1]})"
+                
+                if declare -f "${options[action_index]}" >/dev/null; then
+                    ${options[action_index]}
+                    nextrun
+                else
+                    _red "错误：函数 ${options[action_index]} 未定义"
+                    sleep 1
+                    backtomain
+                fi
+            else
+                backtomain
+            fi
+            ;;
+        0) main ;;
+        b)
+            if [[ ${#FUNCNAME[@]} -gt 3 && -n "${FUNCNAME[3]}" ]]; then
+                 if declare -f "${FUNCNAME[3]}" >/dev/null; then
+                    ${FUNCNAME[3]}
+                    return
+                fi
+            fi
+            main
+            ;;
+        q) echo; kill -15 $$ ;;
+        s) selfsetting ;;
+        *) backtomain ;;
     esac
 }
 
