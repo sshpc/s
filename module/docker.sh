@@ -1,4 +1,28 @@
 dockerfun() {
+
+    # ===================== compose 兼容层 =====================
+    # 优先 v2 插件(docker compose)，其次 v1 独立二进制(docker-compose)
+    if [[ -z "${__DC_CMD+x}" ]]; then
+        if docker compose version >/dev/null 2>&1; then
+            __DC_CMD=(docker compose)
+        elif command -v docker-compose >/dev/null 2>&1; then
+            __DC_CMD=(docker-compose)
+            _yellow "提示：检测到 v1 版 docker-compose（已停止维护），建议升级到 docker compose v2"
+        else
+            __DC_CMD=()
+        fi
+    fi
+
+    # 统一调用入口：所有地方都用 dc 代替 docker-compose / docker compose
+    dc() {
+        if [[ ${#__DC_CMD[@]} -eq 0 ]]; then
+            _red "未检测到 docker compose 或 docker-compose"
+            return 1
+        fi
+        "${__DC_CMD[@]}" "$@"
+    }
+    # ==========================================================
+
     beforeMenu(){
     _blue "> ---  当前目录: [ $(pwd) ] ---- < v:${branch}-$selfversion"
     echo
@@ -7,9 +31,12 @@ dockerfun() {
     }
 
     checkcompose() {
-        # 检查当前目录是否存在 docker-compose.yml 文件
-        if [ ! -f "docker-compose.yml" ]; then
-            _red "当前目录没有 docker-compose.yml 文件"
+        # 兼容 v1 / v2 的 compose 文件名
+        if [ ! -f "docker-compose.yml" ] \
+        && [ ! -f "docker-compose.yaml" ] \
+        && [ ! -f "compose.yml" ] \
+        && [ ! -f "compose.yaml" ]; then
+            _red "当前目录没有 compose 文件 (docker-compose.yml / compose.yaml)"
             exit
         fi
     }
@@ -107,10 +134,10 @@ dockerfun() {
         TOTAL_CONTAINERS=$(docker ps -aq | wc -l)
         NETWORKS=$(docker network ls -q | wc -l)
         VOLUMES=$(docker volume ls -q | wc -l)
-        
-        
+
+
         docker -v
-        docker compose version
+        dc version
         echo
         _blue "基本信息"
         echo "运行中/共: ${RUNNING_CONTAINERS}/${TOTAL_CONTAINERS} 网络: ${NETWORKS} | 卷: ${VOLUMES}"
@@ -133,10 +160,13 @@ dockerfun() {
         fi
         echo
         _blue "compose情况"
-        if [ ! -f "docker-compose.yml" ]; then
-            _red "当前目录没有 docker-compose.yml 文件"
+        if [ ! -f "docker-compose.yml" ] \
+        && [ ! -f "docker-compose.yaml" ] \
+        && [ ! -f "compose.yml" ] \
+        && [ ! -f "compose.yaml" ]; then
+            _red "当前目录没有 compose 文件"
         else
-            docker-compose ps
+            dc ps
         fi
         echo
         _blue "容器情况"
@@ -161,10 +191,10 @@ dockerfun() {
             echo "无效的序号，请输入有效的序号。"
         fi
     }
-    
+
 
     dockerimagesrm() {
-        
+
         # 列出将要删除的悬空镜像
         unused_images=$(docker images -f "dangling=true" -q)
         if [ -n "$unused_images" ]; then
@@ -209,12 +239,12 @@ dockerfun() {
 
     composestart() {
         checkcompose
-        docker-compose start
+        dc start
     }
 
     composestop() {
         checkcompose
-        docker-compose stop
+        dc stop
     }
 
     restartcontainer() {
@@ -328,12 +358,12 @@ dockerfun() {
 
     catcomposelogs() {
         checkcompose
-        docker-compose logs
+        dc logs
     }
 
     composeinstall() {
             checkcompose
-            docker-compose up -d $1
+            dc up -d "$@"
 
             if [ $? -eq 0 ]; then
                 _blue '创建命名卷软连接 /home/docker/volume'
@@ -358,14 +388,14 @@ dockerfun() {
 
         composedown() {
             checkcompose
-            docker-compose down
+            dc down
         }
 
         composeinstallbuild() {
             composeinstall '--build'
         }
 
-        
+
 
         dockervolumerm_one() {
             catdockervolume
@@ -403,7 +433,7 @@ dockerfun() {
             _green "所有数据卷已删除"
         }
 
-    
+
 
     catnetworkfun() {
         echo
@@ -448,7 +478,7 @@ dockerfun() {
 
             _blue "容器：$index"
             docker logs --tail 50 "$container_id"
-            
+
         else
             echo "无效的序号，请输入有效的序号。"
         fi
@@ -469,7 +499,7 @@ dockerfun() {
 
             _blue "容器：$index"
             docker logs --tail 10 --follow "$container_id"
-            
+
         else
             echo "无效的序号，请输入有效的序号。"
         fi
@@ -585,14 +615,14 @@ dockerfun() {
         echo
         _blue '容器监控'
         docker stats --no-stream
-        
+
         echo
         _blue "Docker情况"
         # 检查 Docker 是否通过 snap 安装
         if command -v snap &> /dev/null && ( snap list | grep -q "docker" ) >/dev/null 2>&1; then
             echo "检测到 Docker 通过 snap 安装"
             SNAP_DAEMON_CONFIG="var/snap/docker/current/config/daemon.json"
-            
+
             # 检查 snap 配置文件
             if [ -f "$SNAP_DAEMON_CONFIG" ]; then
                 echo "snap Docker 配置文件: $SNAP_DAEMON_CONFIG"
