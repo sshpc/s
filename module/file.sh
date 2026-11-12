@@ -135,6 +135,302 @@ filefun() {
         echo 'aria2c -s 2 -x 2 -c http://xxx/xxx'
     }
 
+    #SMB 连接浏览与下载
+    smbfun() {
+        #检查smbclient是否已安装
+        if ! command -v smbclient &>/dev/null; then
+            check_and_install smbclient
+        fi
+        if ! command -v smbclient &>/dev/null; then
+            check_and_install samba-client
+        fi
+        if ! command -v smbclient &>/dev/null; then
+            _red "smbclient 不可用，请手动安装 samba-client 后重试"
+            return 1
+        fi
+
+        echo
+        _blue "SMB 地址格式: \\\\主机 或 \\\\主机\\\\共享名"
+        read -ep "请输入 SMB 地址 (例如 \\\\x.x.x.x 或 \\\\x.x.x.x\\\\共享名): " smbaddr
+        if [[ -z "$smbaddr" ]]; then
+            _yellow "已取消"
+            return 1
+        fi
+
+        # 统一分隔符并解析主机与共享名
+        local raw="${smbaddr//\\//}"
+        while [[ "$raw" == /* ]]; do raw="${raw#/}"; done
+        local host="${raw%%/*}"
+        local share=""
+        [[ "$raw" == */* ]] && share="${raw#*/}"
+        while [[ "$share" == /* ]]; do share="${share#/}"; done
+        share="${share%%/*}"
+        host="${host// /}"
+        if [[ -z "$host" ]]; then
+            _red "地址格式不正确，应为 \\\\主机 或 \\\\主机\\\\共享名"
+            return 1
+        fi
+
+        local -a auth_opts=()
+        local auth_desc="匿名"
+        local smb_ok=0
+
+        # 首先尝试匿名登录
+        _blue "尝试匿名登录 $host ..."
+        if [[ -n "$share" ]]; then
+            smbclient "//$host/$share" -N -c 'ls' &>/dev/null || smb_ok=1
+        else
+            smbclient -L "//$host" -N &>/dev/null || smb_ok=1
+        fi
+
+        if [[ $smb_ok -ne 0 ]]; then
+            _yellow "匿名登录失败，请提供用户名和密码"
+            local smbuser="" smbpass=""
+            read -ep "用户名: " smbuser
+            if [[ -z "$smbuser" ]]; then
+                _red "未输入用户名，已取消"
+                return 1
+            fi
+            read -rsp "密码: " smbpass
+            echo
+            auth_opts=(-U "$smbuser%$smbpass")
+            auth_desc="$smbuser"
+
+            smb_ok=0
+            if [[ -n "$share" ]]; then
+                smbclient "//$host/$share" "${auth_opts[@]}" -c 'ls' &>/dev/null || smb_ok=1
+            else
+                smbclient -L "//$host" "${auth_opts[@]}" &>/dev/null || smb_ok=1
+            fi
+            if [[ $smb_ok -ne 0 ]]; then
+                _red "登录失败，请检查用户名、密码或网络连通性"
+                return 1
+            fi
+            _green "登录成功: $smbuser@$host"
+        else
+            auth_opts=(-N)
+            _green "匿名登录成功"
+        fi
+
+        # 未指定共享名时，列出共享供选择
+        if [[ -z "$share" ]]; then
+            local -a shares=()
+            local sline=""
+            while IFS= read -r sline; do
+                [[ -n "$sline" ]] && shares+=("$sline")
+            done < <(smbclient -L "//$host" "${auth_opts[@]}" 2>/dev/null | awk '$2 == "Disk" { print $1 }')
+
+            if [[ ${#shares[@]} -eq 0 ]]; then
+                _red "未发现可用的共享目录"
+                return 1
+            fi
+
+            if [[ ${#shares[@]} -eq 1 ]]; then
+                share="${shares[0]}"
+                _green "使用共享: $share"
+            else
+                echo
+                _blue "可用共享列表:"
+                local si
+                for si in "${!shares[@]}"; do
+                    echo -e "$((si + 1))\t${shares[$si]}"
+                done
+                echo
+                read -ep "请输入共享目录序号 (默认 1): " snum
+                [[ -z "$snum" ]] && snum=1
+                if ! [[ "$snum" =~ ^[0-9]+$ ]] || [[ $snum -lt 1 ]] || [[ $snum -gt ${#shares[@]} ]]; then
+                    _red "序号无效"
+                    return 1
+                fi
+                share="${shares[$((snum - 1))]}"
+            fi
+        fi
+
+        # 目录浏览循环
+        local cwd=""
+        local sel=0
+        local key="" rest=""
+        local -a names=() types=() sizes=()
+        local listing="" total=0 rows=0 start=0 i=0
+        local curname="" curtype="" localname=""
+
+        while true; do
+            # 拉取当前 SMB 目录列表
+            local -a smbcmd=(smbclient "//$host/$share" "${auth_opts[@]}")
+            [[ -n "$cwd" ]] && smbcmd+=(-D "$cwd")
+            listing=$("${smbcmd[@]}" -c 'ls' 2>/dev/null)
+
+            names=(); types=(); sizes=()
+            while IFS='|' read -r n t s; do
+                [[ -z "$n" ]] && continue
+                [[ "$n" == "." ]] && continue
+                names+=("$n"); types+=("$t"); sizes+=("$s")
+            done < <(printf '%s\n' "$listing" | awk '
+                {
+                    attr = ""; idx = 0; size = ""
+                    for (i = 2; i < NF; i++) {
+                        if ($i ~ /^[A-Z]+$/ && $(i + 1) ~ /^[0-9]+$/) { attr = $i; idx = i; break }
+                    }
+                    if (idx == 0) next
+                    name = ""
+                    for (i = 1; i < idx; i++) name = (name == "" ? $i : name " " $i)
+                    if (name == "") next
+                    size = $(idx + 1)
+                    type = (attr ~ /D/) ? "d" : "f"
+                    printf "%s|%s|%s\n", name, type, size
+                }')
+
+            # 目录排在前面，.. 排最前
+            local -a dnames=() dtypes=() dsizes=() fnames=() ftypes=() fsizes=()
+            for i in "${!names[@]}"; do
+                if [[ "${names[$i]}" == ".." ]]; then
+                    dnames=(".." "${dnames[@]}")
+                    dtypes=("d" "${dtypes[@]}")
+                    dsizes=("0" "${dsizes[@]}")
+                elif [[ "${types[$i]}" == "d" ]]; then
+                    dnames+=("${names[$i]}"); dtypes+=("d"); dsizes+=("0")
+                else
+                    fnames+=("${names[$i]}"); ftypes+=("f"); fsizes+=("${sizes[$i]}")
+                fi
+            done
+            names=("${dnames[@]}" "${fnames[@]}")
+            types=("${dtypes[@]}" "${ftypes[@]}")
+            sizes=("${dsizes[@]}" "${fsizes[@]}")
+            total=${#names[@]}
+
+            [[ $sel -ge $total ]] && sel=$((total > 0 ? total - 1 : 0))
+
+            # 渲染列表
+            printf "\033[H\033[2J"
+            _blue "SMB: //$host/$share    用户: $auth_desc    路径: /${cwd}"
+            echo
+            rows=$(( $(tput lines 2>/dev/null || echo 24) - 8 ))
+            [[ $rows -lt 5 ]] && rows=5
+            start=0
+            [[ $sel -ge $rows ]] && start=$((sel - rows + 1))
+
+            if [[ $total -eq 0 ]]; then
+                _yellow "  (目录为空)"
+            fi
+            for ((i = start; i < total && i < start + rows; i++)); do
+                local icon="[FILE]"
+                local disp="${names[$i]}"
+                if [[ "${types[$i]}" == "d" ]]; then
+                    icon="[DIR ]"
+                    [[ "$disp" == ".." ]] && disp=".. (上级目录)"
+                fi
+                if [[ $i -eq $sel ]]; then
+                    printf "\033[7m %s %s \033[0m\n" "$icon" "$disp"
+                else
+                    printf " %s %s\n" "$icon" "$disp"
+                fi
+            done
+            echo
+            _yellow "↑/↓ 选择    回车 进入目录/下载文件    q 退出"
+
+            # 读取按键
+            key=""
+            IFS= read -rsn1 key
+            if [[ "$key" == $'\x1b' ]]; then
+                rest=""
+                IFS= read -rsn2 -t 0.2 rest
+                case "$rest" in
+                    '[A') [[ $sel -gt 0 ]] && sel=$((sel - 1)) ;;
+                    '[B') [[ $sel -lt $((total - 1)) ]] && sel=$((sel + 1)) ;;
+                esac
+                continue
+            fi
+
+            case "$key" in
+                q|Q)
+                    _yellow "已退出 SMB 浏览"
+                    break
+                    ;;
+                k)
+                    [[ $sel -gt 0 ]] && sel=$((sel - 1))
+                    continue
+                    ;;
+                j)
+                    [[ $sel -lt $((total - 1)) ]] && sel=$((sel + 1))
+                    continue
+                    ;;
+                '')
+                    if [[ $total -eq 0 ]]; then
+                        continue
+                    fi
+                    curname="${names[$sel]}"
+                    curtype="${types[$sel]}"
+
+                    if [[ "$curname" == ".." ]]; then
+                        if [[ -z "$cwd" ]]; then
+                            continue
+                        fi
+                        if [[ "$cwd" == */* ]]; then
+                            cwd="${cwd%/*}"
+                        else
+                            cwd=""
+                        fi
+                        sel=0
+                    elif [[ "$curtype" == "d" ]]; then
+                        if [[ -z "$cwd" ]]; then
+                            cwd="$curname"
+                        else
+                            cwd="$cwd/$curname"
+                        fi
+                        sel=0
+                    else
+                        localname="${curname##*/}"
+                        local expsize="${sizes[$sel]}"
+                        [[ "$expsize" =~ ^[0-9]+$ ]] || expsize=0
+                        echo
+                        _blue "开始下载: $curname  ->  $(pwd)/$localname"
+                        # 后台下载：stdout/stderr 全部隔离，屏蔽 smb.conf 参数告警
+                        local dlerr="/tmp/.s_smb_err.$$"
+                        rm -f "$localname"
+                        "${smbcmd[@]}" -c "get \"$curname\" \"$localname\"" >/dev/null 2>"$dlerr" &
+                        local dlpid=$!
+                        if [[ $expsize -gt 0 ]]; then
+                            # 已知大小：显示实时进度条
+                            local bar_len=30 spin='|/-\' si=0
+                            tput civis 2>/dev/null
+                            while kill -0 "$dlpid" 2>/dev/null; do
+                                local cur=$(stat -c %s "$localname" 2>/dev/null || echo 0)
+                                [[ "$cur" =~ ^[0-9]+$ ]] || cur=0
+                                local pct=$(( cur * 100 / expsize ))
+                                [[ $pct -gt 100 ]] && pct=100
+                                local filled=$(( pct * bar_len / 100 ))
+                                local empty=$(( bar_len - filled ))
+                                local barf="" bare=""
+                                [[ $filled -gt 0 ]] && barf=$(printf '█%.0s' $(seq 1 $filled))
+                                [[ $empty -gt 0 ]] && bare=$(printf '░%.0s' $(seq 1 $empty))
+                                printf "\r\033[0;36m[%s%s] %3d%%  %s %s/%s\033[0m" \
+                                    "$barf" "$bare" "$pct" "${spin:si++%4:1}" \
+                                    "$(du -h "$localname" 2>/dev/null | awk '{print $1}')" \
+                                    "$(echo "$expsize" | awk '{printf "%.1fM", $1/1048576}')"
+                                sleep 0.2
+                            done
+                            tput cnorm 2>/dev/null
+                            printf "\r\033[K"
+                        else
+                            # 大小未知：沿用脚本自带的转圈等待
+                            loading "$dlpid"
+                        fi
+                        wait "$dlpid"
+                        local dlrc=$?
+                        if [[ $dlrc -eq 0 && -s "$localname" ]]; then
+                            _green "下载完成: $localname  [$(du -h "$localname" 2>/dev/null | awk '{print $1}')]"
+                        else
+                            _red "下载失败: $curname"
+                            [[ -s "$dlerr" ]] && tail -n 3 "$dlerr"
+                        fi
+                        rm -f "$dlerr"
+                        waitinput
+                    fi
+                    ;;
+            esac
+        done
+    }
+
     #统计当前目录占用
     statisticsusage() {
         _blue '占用空间最多的前5文件夹'
@@ -311,7 +607,7 @@ filefun() {
 
     menuname='首页/文件管理'
     echo "filefun" >$installdir/config/lastfun
-    options=("打包压缩目录" packagingdir "解压缩目录" uncompresseddir  "配置目录权限www-data" chownwwwdata "文件搜索" filesearchfun "统计当前目录占用" statisticsusage  "统计目录文件行数" countfileslines "多线程下载" aria2fun )
+    options=("打包压缩目录" packagingdir "解压缩目录" uncompresseddir  "配置目录权限www-data" chownwwwdata "文件搜索" filesearchfun "统计当前目录占用" statisticsusage  "统计目录文件行数" countfileslines "多线程下载" aria2fun "smb连接" smbfun )
 
     menu "${options[@]}"
 
