@@ -840,55 +840,121 @@ selfsetting(){
                 return
             fi
         fi
-        
-        local tmpdir="$installdir/tmp"
-        mkdir -p "$tmpdir"
-        
+
+        local stage="$installdir/tmp/upd"
+        rm -rf "$stage"
+        mkdir -p "$stage/module"
+
         _blue "尝试下载最新版脚本和版本信息..."
-        
-        local s_ok=false v_ok=false
-        
-        if download_file "s.sh" "$tmpdir/s.sh"; then
+        local ok=0
+
+        if download_file "s.sh" "$stage/s.sh"; then
             _green "s.sh 下载成功"
-            s_ok=true
         else
             _red "s.sh 下载失败"
+            ok=1
         fi
-        
-        if download_file "version" "$tmpdir/version"; then
+
+        if download_file "version" "$stage/version"; then
             _green "version 下载成功"
-            v_ok=true
         else
-            _yellow "version 下载失败"
+            _red "version 下载失败"
+            ok=1
         fi
-        
-        if $s_ok && $v_ok; then
-            local new_ver=$(cat "$tmpdir/version" | tr -d '\r\n\t ')
-            
-            _blue "备份当前版本 v$selfversion ..."
-            backup_current_version
-            
-            _blue "安装新版本 v$new_ver ..."
-            cp "$tmpdir/s.sh" "$installdir/s.sh"
-            cp "$tmpdir/version" "$installdir/version"
-            chmod +x "$installdir/s.sh"
-            
-            slog set install "$datevar  | 脚本升级 | v$selfversion -> v$new_ver"
-            
-            cleanup_old_backups 5
-            
-            _green "升级完成 v$selfversion -> v$new_ver"
-            
-            _blue "重新加载模块..."
-            rm -f "$installdir/module"/*.sh
-            rm -f "$installdir/modules.conf"
-            loadfilefun
-            exec "$installdir/s.sh"
+
+        if download_file "modules.conf" "$stage/modules.conf"; then
+            _green "modules.conf 下载成功"
         else
-            _red "升级条件不满足，未执行更新"
+            _red "modules.conf 下载失败"
+            ok=1
         fi
-        
-        rm -rf "$tmpdir"
+
+        if [[ $ok -eq 0 ]]; then
+            local m
+            for m in $(list_all_modules_from_conf "$stage/modules.conf"); do
+                m=$(echo "$m" | tr -d '\r\n\t')
+                [[ -z "$m" ]] && continue
+                if download_file "module/${m}.sh" "$stage/module/${m}.sh"; then
+                    _green "模块 $m 下载成功"
+                else
+                    _red "模块 $m 下载失败"
+                    ok=1
+                fi
+            done
+        fi
+
+        if [[ $ok -ne 0 ]]; then
+            _red "下载未全部成功，已保留当前版本 v$selfversion，未做任何替换"
+            rm -rf "$stage"
+            return 1
+        fi
+
+        # 三道闸：非空 / 语法 / 版本号格式
+        _blue "校验下载内容..."
+        local f
+        local files=("$stage/s.sh")
+        for f in "$stage"/module/*.sh; do
+            [[ -f "$f" ]] && files+=("$f")
+        done
+        for f in "${files[@]}"; do
+            if [[ ! -s "$f" ]]; then
+                _red "校验失败：$f 为空"
+                rm -rf "$stage"
+                return 1
+            fi
+            if ! bash -n "$f" 2>/dev/null; then
+                _red "校验失败：$f 语法错误（可能下载到了错误页面）"
+                rm -rf "$stage"
+                return 1
+            fi
+        done
+        if ! grep -qE '^[0-9]+\.[0-9]+(\.[0-9]+)*$' "$stage/version"; then
+            _red "校验失败：version 内容不合法 ($(head -c 40 "$stage/version" 2>/dev/null))"
+            rm -rf "$stage"
+            return 1
+        fi
+        _green "校验通过"
+
+        local new_ver
+        new_ver=$(tr -d '\r\n\t ' <"$stage/version")
+
+        _blue "备份当前版本 v$selfversion ..."
+        backup_current_version
+
+        _blue "安装新版本 v$new_ver ..."
+        cp -f "$stage/s.sh" "$installdir/s.sh"
+        chmod +x "$installdir/s.sh"
+        cp -f "$stage/version" "$installdir/version"
+        cp -f "$stage/modules.conf" "$installdir/modules.conf"
+
+        mkdir -p "$installdir/module"
+        for f in "$stage"/module/*.sh; do
+            [[ -f "$f" ]] || continue
+            mv -f "$f" "$installdir/module/"
+        done
+
+        # 清理新版本已移除的模块
+        local keep m2 fname
+        for f in "$installdir/module"/*.sh; do
+            [[ -f "$f" ]] || continue
+            fname=$(basename "$f" .sh)
+            keep=0
+            for m2 in $(list_all_modules_from_conf "$installdir/modules.conf"); do
+                m2=$(echo "$m2" | tr -d '\r\n\t')
+                if [[ "$m2" == "$fname" ]]; then
+                    keep=1
+                    break
+                fi
+            done
+            [[ $keep -eq 0 ]] && rm -f "$f"
+        done
+
+        slog set install "$datevar  | 脚本升级 | v$selfversion -> v$new_ver"
+        cleanup_old_backups 5
+        rm -rf "$stage"
+
+        _green "升级完成 v$selfversion -> v$new_ver"
+        exec "$installdir/s.sh"
     }
     
     
