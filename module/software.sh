@@ -160,35 +160,6 @@ softwarefun() {
             apt-get --purge remove apache2-utils -y
             masterremove apache2
         }
-        removedocker() {
-            docker kill $(docker ps -a -q)
-            docker rm $(docker ps -a -q)
-            docker rmi -f $(docker images -a -q) 2>/dev/null || true
-            docker volume rm $(docker volume ls -q) 2>/dev/null || true
-            docker network rm $(docker network ls -q | grep -vE 'bridge|host|none') 2>/dev/null || true
-            systemctl stop docker 2>/dev/null
-            systemctl stop docker.socket 2>/dev/null
-            systemctl disable docker 2>/dev/null
-            pkill -f docker 2>/dev/null
-            pkill -f containerd 2>/dev/null
-            pkill -f runc 2>/dev/null
-            killall -9 docker containerd containerd-shim runc docker-proxy 2>/dev/null
-            apt-get purge -y docker-ce docker-ce-cli docker-compose-plugin docker.io \
-        containerd.io runc docker-ce-rootless-extras 2>/dev/null || true
-            apt-get autoremove docker docker-ce docker-engine docker.io containerd runc
-            apt-get autoremove docker-ce-*
-            apt-get autoremove -y 2>/dev/null || true
-            apt-get autoclean 2>/dev/null || true
-            rm -rf /etc/systemd/system/docker.service.d
-            rm -rf /var/lib/docker
-            rm -rf /var/lib/containerd
-            rm -rf /etc/docker
-            rm -rf /run/docker
-            rm -rf /var/lib/dockershim
-            umount /var/lib/docker/devicemapper 2>/dev/null || true
-            umount /var/lib/docker 2>/dev/null || true
-            masterremove docker
-        }
         removev2() {
             masterremove v2ray
         }
@@ -236,7 +207,7 @@ softwarefun() {
             _blue "卸载完成"
         }
         menuname='首页/软件/卸载'
-        options=("手动输入" masterremove "卸载nginx" removenginx "卸载Apache" removeapache "卸载php" removephp "卸载docker" removedocker "卸载v2ray" removev2 "卸载mysql" removemysql)
+        options=("手动输入" masterremove "卸载nginx" removenginx "卸载Apache" removeapache "卸载php" removephp "卸载v2ray" removev2 "卸载mysql" removemysql)
         menu "${options[@]}"
     }
     
@@ -281,6 +252,323 @@ softwarefun() {
         menu "${options[@]}"
     }
     
+    softdockerfun() {
+        beforeMenu(){
+            _blue "> ---  当前目录: [ $(pwd) ] ---- < v:${branch}-$selfversion"
+            echo
+            if command -v docker &>/dev/null; then
+                _green "docker 已安装: $(docker --version 2>/dev/null)"
+            else
+                _red "docker 未安装"
+            fi
+            echo
+            _yellow "当前菜单: $menuname "
+            echo
+        }
+
+        #安装docker
+        softdocker_install() {
+            _blue "开始安装 Docker ..."
+            if command -v docker &>/dev/null; then
+                _yellow "检测到已安装: $(docker --version 2>/dev/null)"
+                read -ep "是否覆盖重装? (y/n, 默认n): " dkredo
+                [[ "$dkredo" =~ ^[Yy]$ ]] || { _yellow "已取消"; return 0; }
+            fi
+            runthirdscript SuperManito/LinuxMirrors/main/DockerInstallation.sh
+            check_and_install docker-compose
+            echo
+            if command -v docker &>/dev/null; then
+                _green "docker 安装完成: $(docker --version 2>/dev/null)"
+            else
+                _red "未检测到 docker，安装可能失败，请检查上面的输出"
+            fi
+        }
+
+        #docker换源
+        softdocker_mirror() {
+            _blue "调用 linuxmirrors.cn 换源脚本 ..."
+            if command -v curl &>/dev/null; then
+                bash <(curl -sSL https://linuxmirrors.cn/docker.sh)
+            elif command -v wget &>/dev/null; then
+                local tmp="/tmp/.s_dockermirror.$$"
+                if wget -qO "$tmp" https://linuxmirrors.cn/docker.sh && [[ -s "$tmp" ]]; then
+                    bash "$tmp"
+                    rm -f "$tmp"
+                else
+                    rm -f "$tmp"
+                    _red "换源脚本下载失败，请检查网络"
+                    return 1
+                fi
+            else
+                _red "未找到 curl 或 wget，无法执行换源脚本"
+                return 1
+            fi
+        }
+
+        #docker修复
+        softdocker_repair() {
+            _blue "=== docker 修复 ==="
+            if ! command -v docker &>/dev/null; then
+                _red "未检测到 docker 命令，请先安装"
+                return 1
+            fi
+
+            _blue "1. 校验 /etc/docker/daemon.json"
+            if [[ -s /etc/docker/daemon.json ]]; then
+                if command -v python3 &>/dev/null && ! python3 -c "import json;json.load(open('/etc/docker/daemon.json'))" 2>/dev/null; then
+                    local bk="/etc/docker/daemon.json.broken.$(date +%y%m%d%H%M%S)"
+                    mv -f /etc/docker/daemon.json "$bk"
+                    _red "daemon.json 不是合法 JSON，已备份到 $bk 并移除"
+                elif command -v jq &>/dev/null && ! jq empty /etc/docker/daemon.json 2>/dev/null; then
+                    local bk="/etc/docker/daemon.json.broken.$(date +%y%m%d%H%M%S)"
+                    mv -f /etc/docker/daemon.json "$bk"
+                    _red "daemon.json 不是合法 JSON，已备份到 $bk 并移除"
+                else
+                    _green "daemon.json 格式正常"
+                fi
+            else
+                _yellow "daemon.json 不存在，跳过"
+            fi
+
+            _blue "2. 重载并重启服务"
+            systemctl daemon-reload 2>/dev/null
+            systemctl reset-failed docker 2>/dev/null
+            systemctl start docker 2>/dev/null
+            systemctl restart docker 2>/dev/null
+
+            _blue "3. 结果"
+            local st
+            st=$(systemctl is-active docker 2>/dev/null)
+            if [[ "$st" == "active" ]]; then
+                _green "docker 服务运行中"
+                docker info --format '{{.ServerVersion}}' 2>/dev/null | sed 's/^/    ServerVersion: /'
+            else
+                _red "docker 服务状态: $st"
+                _yellow "最近日志:"
+                journalctl -u docker -n 15 --no-pager 2>/dev/null
+            fi
+        }
+
+        #---------------- docker 卸载公共步骤 ----------------
+        # 停止服务并杀掉残留进程
+        _dk_stop_services() {
+            _blue "停止 docker 相关服务 ..."
+            systemctl stop docker.socket 2>/dev/null || true
+            systemctl stop docker.service 2>/dev/null || true
+            systemctl stop containerd.service 2>/dev/null || true
+            systemctl disable docker.socket 2>/dev/null || true
+            systemctl disable docker.service 2>/dev/null || true
+            systemctl disable containerd.service 2>/dev/null || true
+            pkill -9 -x dockerd 2>/dev/null || true
+            pkill -9 -x containerd 2>/dev/null || true
+            pkill -9 -x containerd-shim 2>/dev/null || true
+            pkill -9 -x docker-proxy 2>/dev/null || true
+            pkill -9 -x runc 2>/dev/null || true
+            sleep 1
+        }
+
+        # 清空容器/卷/网络/镜像（仅彻底卸载时调用）
+        _dk_remove_data_objects() {
+            command -v docker >/dev/null 2>&1 || return 0
+            local ids
+            ids=$(docker ps -aq 2>/dev/null)
+            if [[ -n "$ids" ]]; then
+                _blue "删除全部容器 ..."
+                # shellcheck disable=SC2086
+                docker rm -f $ids >/dev/null 2>&1 || true
+            fi
+            ids=$(docker volume ls -q 2>/dev/null)
+            if [[ -n "$ids" ]]; then
+                _blue "删除全部数据卷 ..."
+                # shellcheck disable=SC2086
+                docker volume rm -f $ids >/dev/null 2>&1 || true
+            fi
+            ids=$(docker network ls --format '{{.Name}}' 2>/dev/null | grep -vE '^(bridge|host|none)$')
+            if [[ -n "$ids" ]]; then
+                _blue "删除自定义网络 ..."
+                # shellcheck disable=SC2086
+                docker network rm $ids >/dev/null 2>&1 || true
+            fi
+            ids=$(docker images -aq 2>/dev/null)
+            if [[ -n "$ids" ]]; then
+                _blue "删除全部镜像 ..."
+                # shellcheck disable=SC2086
+                docker rmi -f $ids >/dev/null 2>&1 || true
+            fi
+        }
+
+        # 移除 apt 管理的 docker 软件包（只对真实存在的包名执行，避免整条命令失败）
+        _dk_purge_packages() {
+            local pkgs=() p
+            for p in docker-ce docker-ce-cli docker-ce-rootless-extras docker-compose-plugin \
+                     docker-buildx-plugin docker-scan-plugin docker.io docker-doc \
+                     docker-compose docker-engine docker-ce-rootless podman-docker \
+                     containerd containerd.io runc; do
+                dpkg -s "$p" >/dev/null 2>&1 && pkgs+=("$p")
+            done
+            while read -r p; do
+                [[ -n "$p" ]] || continue
+                case " ${pkgs[*]} " in
+                    *" $p "*) ;;
+                    *) pkgs+=("$p") ;;
+                esac
+            done < <(dpkg-query -W -f='${Package}\n' 2>/dev/null | grep -E '^(docker|containerd|podman-docker)' || true)
+
+            if [[ ${#pkgs[@]} -eq 0 ]]; then
+                _yellow "未发现 apt 管理的 docker 相关软件包"
+                return 0
+            fi
+            _blue "卸载软件包: ${pkgs[*]}"
+            if ! apt-get purge -y "${pkgs[@]}"; then
+                _red "整批卸载失败，改为逐个卸载 ..."
+                for p in "${pkgs[@]}"; do
+                    apt-get purge -y "$p" || _red "卸载 $p 失败"
+                done
+            fi
+            apt-get autoremove -y >/dev/null 2>&1 || true
+            apt-get autoclean >/dev/null 2>&1 || true
+        }
+
+        # 移除 snap 版 docker
+        _dk_remove_snap() {
+            command -v snap >/dev/null 2>&1 || return 0
+            if snap list 2>/dev/null | awk 'NR>1 {print $1}' | grep -qx 'docker'; then
+                _blue "移除 snap 版 docker ..."
+                snap remove docker 2>/dev/null || _red "snap remove docker 失败"
+            fi
+        }
+
+        # 卸载 docker（保留镜像/容器/数据卷/配置）
+        softdocker_uninstall_keepdata() {
+            echo
+            _yellow "模式一：仅卸载 docker 程序，保留镜像、容器、数据卷与配置"
+            _yellow "保留: /var/lib/docker  /var/lib/containerd  /etc/docker"
+            read -ep "确认卸载? (y/n, 默认n): " dkrm1
+            [[ "$dkrm1" =~ ^[Yy]$ ]] || { _yellow "已取消"; return 0; }
+
+            _dk_stop_services
+            _dk_remove_snap
+            _dk_purge_packages
+
+            rm -rf /etc/systemd/system/docker.service.d
+            rm -f /etc/systemd/system/docker.service /etc/systemd/system/docker.socket
+            rm -f /usr/lib/systemd/system/docker.service /usr/lib/systemd/system/docker.socket
+            rm -f /lib/systemd/system/docker.service /lib/systemd/system/docker.socket
+            systemctl daemon-reload 2>/dev/null || true
+            systemctl reset-failed 2>/dev/null || true
+            hash -r
+
+            echo
+            _blue "=== 结果 ==="
+            if command -v docker >/dev/null 2>&1; then
+                _red "docker 命令仍存在: $(command -v docker)"
+            else
+                _green "docker 程序已卸载"
+            fi
+            if [[ -d /var/lib/docker ]]; then
+                _green "已保留: /var/lib/docker ($(du -sh /var/lib/docker 2>/dev/null | awk '{print $1}'))"
+            fi
+            if [[ -d /var/lib/containerd ]]; then
+                _green "已保留: /var/lib/containerd ($(du -sh /var/lib/containerd 2>/dev/null | awk '{print $1}'))"
+            fi
+            if [[ -d /etc/docker ]]; then
+                _green "已保留: /etc/docker"
+            fi
+            _yellow "以后重新安装 docker，原有镜像与容器可直接复用"
+        }
+
+        # 彻底卸载 docker（删除一切相关文件）
+        softdocker_uninstall_all() {
+            echo
+            _red "模式二：彻底删除 docker，包括镜像、容器、数据卷、网络、配置与 apt 源"
+            _red "此操作不可恢复！"
+            read -ep "确认彻底删除? 输入 yes 继续: " dkrm2
+            [[ "$dkrm2" == "yes" ]] || { _yellow "已取消"; return 0; }
+
+            _dk_remove_data_objects
+            _dk_stop_services
+            _dk_remove_snap
+            _dk_purge_packages
+
+            _blue "删除目录与配置 ..."
+            rm -rf /var/lib/docker /var/lib/containerd /var/lib/dockershim
+            rm -rf /etc/docker /etc/containerd
+            rm -rf /run/docker /run/containerd
+            rm -f /run/docker.sock /var/run/docker.sock
+            rm -rf /var/log/docker /var/log/containerd /var/log/pods
+            rm -f /var/log/docker.log
+            rm -rf /usr/libexec/docker /usr/libexec/docker-cli-plugins
+            rm -rf /usr/lib/docker /usr/local/lib/docker
+            rm -rf /etc/systemd/system/docker.service.d
+            rm -f /etc/systemd/system/docker.service /etc/systemd/system/docker.socket
+            rm -f /usr/lib/systemd/system/docker.service /usr/lib/systemd/system/docker.socket
+            rm -f /lib/systemd/system/docker.service /lib/systemd/system/docker.socket
+            rm -rf /var/snap/docker /snap/docker
+
+            _blue "清理 apt 源与密钥 ..."
+            rm -f /etc/apt/sources.list.d/docker.list /etc/apt/sources.list.d/docker.list.save
+            rm -rf /etc/apt/sources.list.d/docker.list.d
+            rm -f /etc/apt/keyrings/docker.gpg /etc/apt/keyrings/docker.asc
+            rm -f /usr/share/keyrings/docker-archive-keyring.gpg /usr/share/keyrings/docker.gpg
+            rm -f /etc/apt/trusted.gpg.d/docker.gpg /etc/apt/trusted.gpg.d/docker-archive-keyring.gpg
+
+            _blue "清理 iptables 残留链 ..."
+            local t
+            for t in filter nat; do
+                iptables -t "$t" -F DOCKER 2>/dev/null || true
+                iptables -t "$t" -X DOCKER 2>/dev/null || true
+                iptables -t "$t" -F DOCKER-USER 2>/dev/null || true
+                iptables -t "$t" -X DOCKER-USER 2>/dev/null || true
+                iptables -t "$t" -F DOCKER-ISOLATION-STAGE-1 2>/dev/null || true
+                iptables -t "$t" -X DOCKER-ISOLATION-STAGE-1 2>/dev/null || true
+                iptables -t "$t" -F DOCKER-ISOLATION-STAGE-2 2>/dev/null || true
+                iptables -t "$t" -X DOCKER-ISOLATION-STAGE-2 2>/dev/null || true
+                iptables -t "$t" -F DOCKER-ISOLATION 2>/dev/null || true
+                iptables -t "$t" -X DOCKER-ISOLATION 2>/dev/null || true
+            done
+
+            _blue "删除 docker 用户组 ..."
+            if getent group docker >/dev/null 2>&1; then
+                groupdel docker 2>/dev/null || _yellow "docker 组仍在使用，跳过"
+            fi
+
+            systemctl daemon-reload 2>/dev/null || true
+            systemctl reset-failed 2>/dev/null || true
+            hash -r
+
+            echo
+            _blue "=== 残留检查 ==="
+            local left=0 d svc
+            for d in docker dockerd docker-compose containerd runc; do
+                if command -v "$d" >/dev/null 2>&1; then
+                    _red "命令仍在: $d -> $(command -v "$d")"
+                    left=1
+                fi
+            done
+            for d in /var/lib/docker /var/lib/containerd /etc/docker /run/docker \
+                     /var/run/docker.sock /etc/apt/sources.list.d/docker.list; do
+                if [[ -e "$d" ]]; then
+                    _red "残留: $d"
+                    left=1
+                fi
+            done
+            for svc in docker.service docker.socket containerd.service; do
+                if systemctl list-unit-files "$svc" 2>/dev/null | grep -q "^$svc"; then
+                    _red "残留服务单元: $svc"
+                    left=1
+                fi
+            done
+            if [[ $left -eq 0 ]]; then
+                _green "未发现残留，docker 已彻底移除"
+            else
+                _yellow "以上项目仍然存在，可按提示手动清理"
+            fi
+        }
+        menuname='首页/软件/docker'
+        options=("安装docker" softdocker_install "换源" softdocker_mirror "修复" softdocker_repair "卸载docker(保留数据)" softdocker_uninstall_keepdata "彻底删除docker" softdocker_uninstall_all)
+        menu "${options[@]}"
+    }
+
     cputest() {
         echo "检查安装 stress 和 sysbench"
         check_and_install stress sysbench
@@ -303,11 +591,6 @@ softwarefun() {
     }
     mysqlBenchfun(){
         runthirdscript sshpc/mysql-bench/main/mysql-bench.sh
-    }
-    
-    dockerinstall() {
-        runthirdscript SuperManito/LinuxMirrors/main/DockerInstallation.sh
-        check_and_install docker-compose 
     }
     
     installvasma() {
@@ -347,7 +630,7 @@ softwarefun() {
     
     menuname='首页/软件'
     echo "softwarefun" >$installdir/config/lastfun
-    options=("aptupdate软件更新" aptupdatefun "修复更新" configureaptfun "换软件源" changemirrors "snap管理" snapfun "软件卸载" removefun "安装常用包" installcomso "安装smbd" smbdinstall 安装docker dockerinstall   "安装vasma八合一" installvasma "安装3x-ui" install3xui "安装openvpn" installopenvpn "安装aapanel" installaapanel "安装RustDesk-Server" installrustdeskserver "cpu测试" cputest  "小白机器跑分" FastBenchfun "融合怪测试" ecstest "mysql跑分测试" mysqlBenchfun "pvetools脚本" pvetoolsfun "基于hping3网络攻击脚本" hping3fun "基于lsyncd文件实时同步" lsyncdshelltoolfun)
+    options=("aptupdate软件更新" aptupdatefun "修复更新" configureaptfun "换软件源" changemirrors "snap管理" snapfun "软件卸载" removefun "docker管理" softdockerfun "安装常用包" installcomso "安装smbd" smbdinstall "安装vasma八合一" installvasma "安装3x-ui" install3xui "安装openvpn" installopenvpn "安装aapanel" installaapanel "安装RustDesk-Server" installrustdeskserver "cpu测试" cputest  "小白机器跑分" FastBenchfun "融合怪测试" ecstest "mysql跑分测试" mysqlBenchfun "pvetools脚本" pvetoolsfun "基于hping3网络攻击脚本" hping3fun "基于lsyncd文件实时同步" lsyncdshelltoolfun)
     menu "${options[@]}"
     
 }
