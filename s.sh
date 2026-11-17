@@ -1207,4 +1207,4 @@ selfinitfun
 loadfilefun
 exceptionfun
 selfversionfun
-selfrun
+selfrun "$@"
