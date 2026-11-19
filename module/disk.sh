@@ -42,10 +42,39 @@ diskfun() {
         empty_bar=$(printf '░%.0s' $(seq 1 $empty))
         echo -e "  ${color}${filled_bar}${empty_bar}\e[0m  ${pcent}  ($used/$size)"
 
-        
-        # 仅展示物理磁盘型号和容量
-        _blue "\n物理磁盘"
-        fdisk -l 2>/dev/null | grep -E "Disk /dev|Disk model" | sed 's/^/  /'
+        # 扫描所有已挂载的文件系统（包括其他挂载的磁盘，排除 loop 设备）
+        _blue "\n=== 所有挂载的文件系统（含其他磁盘）==="
+        echo "  文件系统          总量    已用    可用  使用率  挂载点"
+        while read -r fs size used avail pcent mount; do
+            [[ "$mount" == "Mounted" ]] && continue
+            [[ -z "$mount" ]] && continue
+            [[ "$fs" == /dev/loop* ]] && continue
+            usage=$(echo "$pcent" | tr -d '%')
+            bar_len=20
+            filled=$(( usage * bar_len / 100 ))
+            empty=$(( bar_len - filled ))
+            if (( usage >= 90 )); then
+                mcolor=$'\e[1;31m'
+            elif (( usage >= 75 )); then
+                mcolor=$'\e[1;33m'
+            else
+                mcolor=$'\e[1;32m'
+            fi
+            reset=$'\e[0m'
+            filled_bar=$(printf '█%.0s' $(seq 1 $filled))
+            empty_bar=$(printf '░%.0s' $(seq 1 $empty))
+            printf "  %-16s %-7s %-7s %-7s %-8s  %s%s%s%s  %s\n" \
+                "$fs" "$size" "$used" "$avail" "$pcent" \
+                "$mcolor" "${filled_bar}${empty_bar}" "$reset" "$pcent" "$mount"
+        done < <(df -h --output=source,size,used,avail,pcent,target | tail -n +2)
+
+        # 所有物理磁盘（包括未挂载的其他磁盘）
+        _blue "\n=== 所有物理磁盘 ==="
+        echo "  磁盘设备           型号                    容量"
+        lsblk -d -n -o NAME,MODEL,SIZE 2>/dev/null | grep -E 'sd|nvme|hd|vd' | grep -v 'loop' | while read -r name model size; do
+            [[ -z "$name" ]] && continue
+            printf "  /dev/%-14s %-24s %s\n" "$name" "${model:-未知}" "$size"
+        done
     }
     #磁盘占用扫描
     diskscan(){
@@ -415,6 +444,10 @@ diskfun() {
 
         DISK=${UNUSED_DISKS[$((choice-1))]}
         _blue "已选择磁盘: $DISK"
+
+        # 确保所需工具已安装
+        check_and_install parted
+        check_and_install growpart cloud-guest-utils cloud-utils-growpart
 
         # 检查是否已有分区
         PART="${DISK}1"
