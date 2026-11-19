@@ -308,6 +308,14 @@ systemfun() {
         echo "当前建立的连接:"
         netstat -n | awk '/^tcp/ {++S[$NF]} END {for(a in S) print a, S[a]}'
 
+        _blue "--IP连接数--"
+        echo '   数量 ip'
+        netstat -na | grep ESTABLISHED | awk '{print$5}' | awk -F : '{print$1}' | sort | uniq -c | sort -r
+
+        _blue "--SSH失败记录--"
+        lastb | grep root | awk '{print $3}' | sort | uniq
+        echo
+
         more /etc/login.defs | grep -E "PASS_MAX_DAYS" | grep -v "#" | awk -F' ' '{if($2!=90){print ">>>密码过期天数是"$2"天,请管理员改成90天------warning"}}'
         next
         grep -i "^auth.*required.*pam_tally2.so.*$" /etc/pam.d/sshd >/dev/null
