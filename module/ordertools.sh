@@ -41,30 +41,6 @@ ordertoolsfun() {
     }
     
 
-    Fillupownmemory() {
-        #!/bin/bash
-
-        check_and_install python3
-
-        # 定义 Python 代码块
-        python_code=$(
-            cat <<EOF
-import sys
-
-big_list = []
-while True:
-    big_list.append('a' * 1024 * 1024)
-    print(f"当前列表元素数量: {len(big_list)}, 已使用内存: {sys.getsizeof(big_list)} 字节", end='\r')
-
-EOF
-        )
-
-        # 运行 Python 代码
-        python3 -c "$python_code"
-        trap 'echo "停止填充内存。"; exit' INT
-
-    }
-
     #杀死vscode进程
     killvscode() {
 
@@ -83,13 +59,74 @@ EOF
         menu "${options[@]}"
     }
 
+    #清理 VS Code Server 目录
+    clearvscodefun() {
+        echo
+        _blue "=== 清理 VS Code Server 目录 (.vscode-server) ==="
+        echo "将扫描以下用户目录下的 .vscode-server："
+        echo "  /root/.vscode-server"
+        for home in /home/*/; do
+            [[ -d "$home" ]] && echo "  $home.vscode-server"
+        done
+        echo
+        read -rp "确认清理以上 .vscode-server 目录? [y/N]: " confirm
+        if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+            _yellow "已取消"
+            return 1
+        fi
+
+        local total_freed=0
+        local count=0
+
+        # 清理 root 目录
+        if [[ -d /root/.vscode-server ]]; then
+            local sz=$(du -sb /root/.vscode-server 2>/dev/null | awk '{print $1}')
+            rm -rf /root/.vscode-server
+            total_freed=$((total_freed + sz))
+            count=$((count + 1))
+            _green "[已清理] /root/.vscode-server"
+        fi
+
+        # 清理所有普通用户目录
+        for home in /home/*/; do
+            local user_dir="${home%.vscode-server}"
+            user_dir="${user_dir#/home/}"
+            local target="${home}.vscode-server"
+            if [[ -d "$target" ]]; then
+                local sz=$(du -sb "$target" 2>/dev/null | awk '{print $1}')
+                rm -rf "$target"
+                total_freed=$((total_freed + sz))
+                count=$((count + 1))
+                _green "[已清理] $target"
+            fi
+        done
+
+        if (( count > 0 )); then
+            local freed_human
+            if (( total_freed >= 1048576 )); then
+                freed_human=$(awk "BEGIN {printf \"%.2f GB\", $total_freed/1048576}")
+            elif (( total_freed >= 1024 )); then
+                freed_human=$(awk "BEGIN {printf \"%.2f MB\", $total_freed/1024}")
+            else
+                freed_human="${total_freed} KB"
+            fi
+            _green "[OK] 共清理 $count 个 .vscode-server 目录，释放空间：$freed_human"
+        else
+            _yellow "未发现任何 .vscode-server 目录"
+        fi
+    }
+
     gitfilemodefalse(){
         git config --add core.filemode false
+    }
+
+    gitautocrlf(){
+        git config --global core.autocrlf input
     }
 
 
     menuname='首页/其他工具'
     echo "ordertoolsfun" >$installdir/config/lastfun
-    options=("安装git便捷提交" igitcommiteasy "git忽略文件权限改动" gitfilemodefalse "杀死vscode进程" killvscode "Siege-web压力测试" siegetest  "打满自身内存" Fillupownmemory )
+    options=("安装git便捷提交" igitcommiteasy "git忽略文件权限改动" gitfilemodefalse "git自动处理换行符" gitautocrlf "杀死vscode进程" killvscode "清理VS Code Server目录" clearvscodefun "Siege-web压力测试" siegetest )
     menu "${options[@]}"
 }
