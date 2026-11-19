@@ -185,43 +185,145 @@ networkfun() {
     }
 
     fail2banfun() {
+        # 仅在未安装时才安装
+        if ! command -v fail2ban-client &>/dev/null; then
+            check_and_install fail2ban
+        fi
+        if ! command -v fail2ban-client &>/dev/null; then
+            _red "fail2ban 安装失败，请手动安装后重试"
+            return 1
+        fi
+
         fail2banstatusfun() {
-            fail2ban-client status sshd
+            fail2ban-client status
+            echo
+            _blue "sshd 详细状态:"
+            fail2ban-client status sshd 2>/dev/null || _red "sshd jail 未加载"
         }
 
-        installfail2ban() {
-            check_and_install fail2ban
-            echo "开始配置fail2ban"
-            waitinput
-            read -ep "请输入尝试次数 (直接回车默认4次): " retry
-            read -ep "请输入拦截后禁止访问的时间 (直接回车默认604800s): " timeban
-            if [[ "$retry" = "" ]]; then
-                retry=4
-            fi
-            if [[ "$timeban" = "" ]]; then
-                timeban=604800
-            fi
-            rm /etc/fail2ban/jail.d/sshd.local
-            echo "[ssh-iptables]" >>/etc/fail2ban/jail.d/sshd.local
-            echo "enabled  = true" >>/etc/fail2ban/jail.d/sshd.local
-            echo "filter   = sshd" >>/etc/fail2ban/jail.d/sshd.local
-            echo "action   = iptables[name=SSH, port=ssh, protocol=tcp]" >>/etc/fail2ban/jail.d/sshd.local
-            echo "logpath  = /var/log/auth.log" >>/etc/fail2ban/jail.d/sshd.local
-            echo "maxretry = $retry" >>/etc/fail2ban/jail.d/sshd.local
-            echo "bantime  = $timeban" >>/etc/fail2ban/jail.d/sshd.local
-            service fail2ban start
-            echo "服务已开启"
+        fail2banconfig() {
             echo
-            echo "----服务状态----"
-            fail2banstatusfun
+            _blue "fail2ban jail 配置"
+            echo "1. sshd 防暴力破解"
+            echo "2. smb 防暴力破解"
+            echo "3. 自定义端口防暴力破解"
+            echo
+            read -rp "请选择 [1-3]: " f2b_choice
+
+            case $f2b_choice in
+                1)
+                    _blue "配置 sshd jail..."
+                    cat > /etc/fail2ban/jail.d/sshd.local <<'EOF'
+[sshd]
+enabled = true
+port = ssh
+filter = sshd
+logpath = /var/log/auth.log
+maxretry = 5
+bantime = 3600
+findtime = 600
+EOF
+                    ;;
+                2)
+                    _blue "配置 smb jail..."
+                    cat > /etc/fail2ban/jail.d/samba.local <<'EOF'
+[samba]
+enabled = true
+port = 139,445
+filter = samba
+logpath = /var/log/samba/log.smbd
+maxretry = 5
+bantime = 3600
+findtime = 600
+EOF
+                    ;;
+                3)
+                    read -rp "请输入监听端口 (例如 8080): " port
+                    [[ -z "$port" ]] && { _yellow "已取消"; return 1; }
+                    jailname="custom-port-${port}"
+                    read -rp "请输入日志路径 (例如 /var/log/custom.log): " logpath
+                    [[ -z "$logpath" ]] && { _yellow "已取消"; return 1; }
+                    read -rp "请输入最大重试次数 (默认5): " maxretry
+                    maxretry=${maxretry:-5}
+                    read -rp "请输入封禁时间秒数 (默认3600): " bantime
+                    bantime=${bantime:-3600}
+                    read -rp "请输入统计时间窗口秒数 (默认600): " findtime
+                    findtime=${findtime:-600}
+                    _blue "配置自定义端口 jail: $jailname"
+                    cat > /etc/fail2ban/jail.d/${jailname}.local <<EOF
+[$jailname]
+enabled = true
+port = $port
+filter = $jailname
+logpath = $logpath
+maxretry = $maxretry
+bantime = $bantime
+findtime = $findtime
+EOF
+                    ;;
+                *)
+                    _yellow "无效选择"
+                    return 1
+                    ;;
+            esac
+
+            # 重启 fail2ban 服务
+            if command -v systemctl &>/dev/null; then
+                systemctl restart fail2ban 2>/dev/null || systemctl start fail2ban 2>/dev/null || true
+            else
+                service fail2ban restart 2>/dev/null || service fail2ban start 2>/dev/null || true
+            fi
+            sleep 1
+            _green "fail2ban 配置已写入，服务已重启"
+            echo
+            fail2ban-client status 2>/dev/null || { _yellow "fail2ban 状态查询失败，可能服务尚未完全启动，请稍后再试"; }
+        }
+
+        fail2banbanip() {
+            read -rp "请输入要封禁的 IP: " banip
+            [[ -z "$banip" ]] && { _yellow "已取消"; return 1; }
+            read -rp "请输入 jail 名称 (默认 sshd): " jail
+            jail=${jail:-sshd}
+            fail2ban-client set "$jail" banip "$banip" && _green "已封禁 IP: $banip (jail: $jail)" || _red "封禁失败"
+        }
+
+        fail2banunbanip() {
+            read -rp "请输入要解封的 IP: " unbanip
+            [[ -z "$unbanip" ]] && { _yellow "已取消"; return 1; }
+            read -rp "请输入 jail 名称 (默认 sshd): " jail
+            jail=${jail:-sshd}
+            fail2ban-client set "$jail" unbanip "$unbanip" && _green "已解封 IP: $unbanip (jail: $jail)" || _red "解封失败"
+        }
+
+        fail2banbanned() {
+            read -rp "请输入 jail 名称 (默认 sshd): " jail
+            jail=${jail:-sshd}
+            _blue "当前 jail ($jail) 被封禁的 IP:"
+            fail2ban-client status "$jail" 2>/dev/null | grep "Banned IP list" || _red "无法获取封禁列表，请检查 jail 名称是否正确"
+        }
+
+        fail2banlistjails() {
+            _blue "所有 fail2ban jail:"
+            fail2ban-client status 2>/dev/null || _red "fail2ban 未运行"
+        }
+
+        fail2banrestart() {
+            service fail2ban restart && _green "fail2ban 已重启" || _red "重启失败"
+        }
+
+        fail2banstop() {
+            service fail2ban stop && _green "fail2ban 已停止" || _red "停止失败"
+        }
+
+        fail2banstart() {
+            service fail2ban start && _green "fail2ban 已启动" || _red "启动失败"
         }
 
         menuname='首页/网络/fail2ban'
-        options=("安装配置sshd" installfail2ban "查看状态" fail2banstatusfun)
+        options=("配置jail" fail2banconfig "查看状态" fail2banstatusfun "列出所有jail" fail2banlistjails "封禁IP" fail2banbanip "解封IP" fail2banunbanip "查看封禁列表" fail2banbanned "重启服务" fail2banrestart "停止服务" fail2banstop "启动服务" fail2banstart)
         menu "${options[@]}"
-
     }
-    
+
     #iperf3打流
     iperftest() {
 
@@ -971,9 +1073,60 @@ EOF
         menu "${options[@]}"
     }
 
+    # DNS 查询枚举 (基于 dnsrecon)
+    dnsreconfun() {
+        check_and_install dnsrecon
+
+        dnsstd() {
+            read -rp "请输入目标域名 (例如 example.com): " target
+            [[ -z "$target" ]] && { _yellow "已取消"; return 1; }
+            _blue "正在执行标准 DNS 枚举: dnsrecon -d $target -t std"
+            dnsrecon -d "$target" -t std
+        }
+
+        dnsrev() {
+            read -rp "请输入目标域名 (例如 example.com): " target
+            [[ -z "$target" ]] && { _yellow "已取消"; return 1; }
+            _blue "正在执行反向查询: dnsrecon -d $target -t rev"
+            dnsrecon -d "$target" -t rev
+        }
+
+        dnsbrt() {
+            read -rp "请输入目标域名 (例如 example.com): " target
+            [[ -z "$target" ]] && { _yellow "已取消"; return 1; }
+            _blue "正在执行暴力破解: dnsrecon -d $target -t brt"
+            dnsrecon -d "$target" -t brt
+        }
+
+        dnsaxfr() {
+            read -rp "请输入目标域名 (例如 example.com): " target
+            [[ -z "$target" ]] && { _yellow "已取消"; return 1; }
+            _blue "正在执行区域传输: dnsrecon -d $target -t axfr"
+            dnsrecon -d "$target" -t axfr
+        }
+
+        dnssrv() {
+            read -rp "请输入目标域名 (例如 example.com): " target
+            [[ -z "$target" ]] && { _yellow "已取消"; return 1; }
+            _blue "正在查询 SRV 记录: dnsrecon -d $target -t srv"
+            dnsrecon -d "$target" -t srv
+        }
+
+        dnszone() {
+            read -rp "请输入目标域名 (例如 example.com): " target
+            [[ -z "$target" ]] && { _yellow "已取消"; return 1; }
+            _blue "正在执行区域传送: dnsrecon -d $target -t zone"
+            dnsrecon -d "$target" -t zone
+        }
+
+        menuname='首页/网络/DNS查询'
+        options=("标准枚举 (std)" dnsstd "反向查询 (rev)" dnsrev "暴力破解 (brt)" dnsbrt "区域传输 (axfr)" dnsaxfr "SRV记录查询 (srv)" dnssrv "区域传送 (zone)" dnszone)
+        menu "${options[@]}"
+    }
+
     menuname='首页/网络'
     echo "networkfun" >$installdir/config/lastfun
-    options=("网络信息" netinfo "实时网速" Realtimenetworkspeedfun "外网测速" publicnettest "iperf3打流" iperftest "临时http代理" http_proxy  "配置局域网ip" lanfun "nmap扫描" nmapfun "ufw" ufwfun "fail2ban" fail2banfun  "系统网络配置优化" system_best "端口转发服务" portforward "测试端口延迟" testport "切换TCP拥塞控制" switchTCPctrl "iptables管理" iptablesfun)
+    options=("网络信息" netinfo "实时网速" Realtimenetworkspeedfun "外网测速" publicnettest "iperf3打流" iperftest "临时http代理" http_proxy  "配置局域网ip" lanfun "nmap扫描" nmapfun "ufw" ufwfun "fail2ban" fail2banfun  "系统网络配置优化" system_best "端口转发服务" portforward "测试端口延迟" testport "切换TCP拥塞控制" switchTCPctrl "iptables管理" iptablesfun "DNS查询" dnsreconfun)
 
     menu "${options[@]}"
 
