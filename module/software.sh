@@ -1,6 +1,6 @@
 softwarefun() {
     beforeMenu(){
-        _blue "> ---  当前目录: [ $(pwd) ] ---- < v:${branch}-$selfversion"
+        _blue "> ---  当前目录: [ $(pwd) ] ---- < v:$selfversion"
         echo
         _yellow "当前菜单: $menuname "
         echo
@@ -170,38 +170,194 @@ softwarefun() {
             apt-get remove mysql-client-5.7 -y
             apt-get remove mysql-client-core-5.7 -y
             apt-get remove apparmor -y
-            apt-get autoremove mysql* --purge -y
+            apt-get autoremove -y
             masterremove mysql-server
         }
-        #彻底卸载
-        masterremove() {
-            if [ $# -eq 0 ]; then
-                read -ep "请输入要卸载的软件名: " resoftname
-            else
-                resoftname=$1
+        # 软件名校验：按 dpkg 包名规范限制字符集，杜绝通配符/路径/命令注入
+        # 注意：安全性主要来自后面的「精确包名匹配」，这里的字符校验是第二道闸
+        _uninstall_name_valid() {
+            local n="$1"
+            [[ -n "$n" ]] || { _red "软件名不能为空"; return 1; }
+            (( ${#n} >= 2 )) || { _red "软件名过短（至少 2 个字符），已拒绝：$n"; return 1; }
+            (( ${#n} <= 64 )) || { _red "软件名过长（最多 64 个字符），已拒绝"; return 1; }
+            if [[ ! "$n" =~ ^[a-zA-Z0-9][a-zA-Z0-9._+-]*$ ]]; then
+                _red "软件名含非法字符，只允许字母、数字和 . _ + -：$n"
+                return 1
             fi
-            _red "注意：将会删除关于 $resoftname 所有内容"
+            case "$n" in
+                */*|*..*) _red "软件名不能包含路径分隔符或 ..：$n"; return 1 ;;
+            esac
+            # 阻止把系统级关键目录名当成软件名
+            case "$n" in
+                etc|usr|var|lib|bin|sbin|boot|home|root|run|opt|tmp|sys|proc|dev|lib64|systemd)
+                    _red "拒绝卸载系统关键目录名：$n"; return 1 ;;
+            esac
+            return 0
+        }
+
+        # 彻底卸载：按 dpkg 包清单精确删除，不再按名字模糊 find
+        masterremove() {
+            local resoftname
+            if [ $# -eq 0 ]; then
+                read -ep "请输入要卸载的软件名（dpkg 包名，可用 dpkg -l 查询）: " resoftname
+            else
+                resoftname="$1"
+            fi
+
+            if ! _uninstall_name_valid "$resoftname"; then
+                _red "已取消卸载操作"
+                next
+                return 1
+            fi
+
+            # 1. 必须精确命中已安装包名；模糊匹配只做「提示」，绝不直接批量删
+            local -a cand=()
+            local pkg pkg_status
+            pkg_status=$(dpkg-query -W -f='${Status}' -- "$resoftname" 2>/dev/null)
+            if [[ "$pkg_status" == "install ok installed" ]]; then
+                cand+=("$resoftname")
+            else
+                # 不是 apt 包（如 v2ray、手动编译安装的软件）：只清理固定路径白名单，不做模糊 find
+                if [[ -n "$pkg_status" ]]; then
+                    _red "包 $resoftname 当前状态为「$pkg_status」，不是已安装状态"
+                else
+                    _yellow "未在 apt 已安装包中找到 $resoftname（可能是手动安装或已经卸载）"
+                fi
+                local -a fixedpaths=()
+                local cand_path
+                for cand_path in \
+                    "/etc/$resoftname" "/etc/$resoftname.d" \
+                    "/usr/bin/$resoftname" "/usr/local/bin/$resoftname" \
+                    "/usr/sbin/$resoftname" "/usr/local/sbin/$resoftname" \
+                    "/usr/share/$resoftname" "/usr/lib/$resoftname" \
+                    "/var/log/$resoftname" "/var/lib/$resoftname" \
+                    "/opt/$resoftname" "/run/$resoftname" \
+                    "/etc/systemd/system/$resoftname.service" \
+                    "/lib/systemd/system/$resoftname.service" \
+                    "/etc/init.d/$resoftname"; do
+                    [[ -e "$cand_path" || -L "$cand_path" ]] && fixedpaths+=("$cand_path")
+                done
+                if (( ${#fixedpaths[@]} == 0 )); then
+                    _yellow "也没有找到固定路径下的残留，无需处理"
+                    next
+                    return 1
+                fi
+                _yellow "将只清理以下固定路径（不扫描整个文件系统）："
+                printf '  %s\n' "${fixedpaths[@]}"
+                local fixedconfirm
+                read -r -p "确认删除以上路径？(输入 yes 确认，其他任意键跳过): " fixedconfirm
+                if [[ "$fixedconfirm" == "yes" ]]; then
+                    for cand_path in "${fixedpaths[@]}"; do
+                        [[ -z "$cand_path" || "$cand_path" == "/" ]] && continue
+                        rm -rf -- "$cand_path"
+                    done
+                    _green "已清理固定路径下的残留"
+                else
+                    _yellow "已跳过"
+                fi
+                next
+                return 0
+            fi
+
+            # 2. 展示该包的关键属性
+            _yellow "匹配到已安装包："
+            local meta
+            for pkg in "${cand[@]}"; do
+                meta=$(dpkg-query -W -f='${Version}  E=${Essential}  P=${Priority}' -- "$pkg" 2>/dev/null)
+                printf '  %-30s %s\n' "$pkg" "$meta"
+            done
+            echo
+
+            # 3. 关键保护：Essential / required / important 包必须二次确认
+            local -a critical=()
+            for pkg in "${cand[@]}"; do
+                meta=$(dpkg-query -W -f='${Essential} ${Priority}' -- "$pkg" 2>/dev/null)
+                case "$meta" in
+                    yes*|*" required"|*" important") critical+=("$pkg") ;;
+                esac
+            done
+            if (( ${#critical[@]} > 0 )); then
+                _red "警告：以下属于 Essential、Priority=required 或 important 的系统包："
+                printf '  %s\n' "${critical[@]}"
+                _red "卸载它们极可能损坏系统（缺少 shell、coreutils、systemd、passwd、hostname 等会导致无法登录或无法启动）"
+                local riskconfirm
+                read -r -p "确认继续？请输入 I-UNDERSTAND 全大写确认，其他任意内容取消: " riskconfirm
+                if [[ "$riskconfirm" != "I-UNDERSTAND" ]]; then
+                    _yellow "已取消（这是推荐的选择）"
+                    next
+                    return 1
+                fi
+            fi
+
+            _red "注意：将会卸载以下包及其配置：${cand[*]}"
             waitinput
-            _red "开始卸载 $resoftname"
             echo "关闭服务.."
-            service $resoftname stop
-            systemctl stop $resoftname
-            apt remove $resoftname -y
-            apt-get --purge remove $resoftname -y
-            apt-get --purge remove $resoftname-* -y
-            echo "清除dept列表"
-            apt purge $(dpkg -l | grep $resoftname | awk '{print $2}' | tr "\n" " ")
-            echo "删除 $resoftname 的启动脚本"
-            update-rc.d -f $resoftname remove
-            echo "删除所有包含 $resoftname 的文件"
-            rm -rf /etc/$resoftname
-            rm -rf /etc/init.d/$resoftname
-            find /etc -name *$resoftname* -print0 | xargs -0 rm -rf
-            rm -rf /usr/bin/$resoftname
-            rm -rf /var/log/$resoftname
-            rm -rf /lib/systemd/system/$resoftname.service
-            rm -rf /var/lib/$resoftname
-            rm -rf /run/$resoftname
+            for pkg in "${cand[@]}"; do
+                service "$pkg" stop 2>/dev/null
+                systemctl stop "$pkg" 2>/dev/null
+            done
+
+            # 4. 卸载前先记下这些包的 dpkg 文件清单（purge 后 dpkg -L 就读不到了）
+            local -a owned=()
+            local f
+            for pkg in "${cand[@]}"; do
+                while IFS= read -r f; do
+                    [[ "$f" == /* ]] || continue
+                    owned+=("$f")
+                done < <(dpkg -L "$pkg" 2>/dev/null)
+            done
+
+            # 5. 交给包管理器精确卸载，不再自己 rm 系统路径
+            echo "执行 purge.."
+            apt-get --purge remove -y -- "${cand[@]}"
+            local purge_rc=$?
+            if (( purge_rc != 0 )); then
+                _red "apt-get purge 返回 $purge_rc，请检查上面的输出"
+                next
+                return $purge_rc
+            fi
+
+            # 6. 仅清理「这些包原本拥有」且 purge 后仍留在磁盘上的文件
+            #    并且永远跳过系统关键路径（即使它出现在包清单里也不自己删）
+            local -a uniq_left=()
+            if (( ${#owned[@]} > 0 )); then
+                local -a sorted_owned=()
+                mapfile -t sorted_owned < <(printf '%s\n' "${owned[@]}" | sort -u)
+                for f in "${sorted_owned[@]}"; do
+                    [[ -n "$f" ]] || continue
+                    [[ -f "$f" || -L "$f" ]] || continue
+                    case "$f" in
+                        /|/bin|/sbin|/lib|/lib64|/usr|/usr/bin|/usr/sbin|/usr/lib|/etc|/var|/var/lib|/var/lib/dpkg|/var/lib/dpkg/*|/boot|/proc|/sys|/dev)
+                            continue ;;
+                        /etc/passwd|/etc/shadow|/etc/group|/etc/gshadow|/etc/hosts|/etc/hostname|/etc/fstab|/etc/passwd-|/etc/shadow-|/etc/group-)
+                            continue ;;
+                        /etc/pam.d/*|/etc/ssh/*|/etc/sudoers*|/etc/ld.so.*|/etc/default/*)
+                            continue ;;
+                        /usr/bin/bash*|/usr/bin/sh|/usr/bin/env|/usr/bin/dpkg*|/usr/bin/apt*|/usr/bin/passwd|/usr/bin/hostname|/usr/bin/login|/usr/sbin/*)
+                            continue ;;
+                    esac
+                    uniq_left+=("$f")
+                done
+            fi
+
+            if (( ${#uniq_left[@]} == 0 )); then
+                _green "没有残留文件，卸载干净"
+            else
+                _yellow "以下 ${#uniq_left[@]} 个残留文件（来自该包的 dpkg 清单）："
+                printf '  %s\n' "${uniq_left[@]}"
+                local delconfirm
+                read -r -p "确认删除这些残留？(输入 yes 确认，其他任意键跳过): " delconfirm
+                if [[ "$delconfirm" == "yes" ]]; then
+                    for f in "${uniq_left[@]}"; do
+                        [[ -z "$f" || "$f" == "/" ]] && continue
+                        rm -rf -- "$f"
+                    done
+                    _green "残留文件已删除"
+                else
+                    _yellow "已跳过残留文件删除"
+                fi
+            fi
+
             next
             echo
             _blue "卸载完成"
@@ -213,7 +369,7 @@ softwarefun() {
     
     snapfun() {
         beforeMenu(){
-            _blue "> ---  当前目录: [ $(pwd) ] ---- < v:${branch}-$selfversion"
+            _blue "> ---  当前目录: [ $(pwd) ] ---- < v:$selfversion"
             echo
             if command -v snap &> /dev/null; then
                 _green "snap 已安装"
@@ -254,7 +410,7 @@ softwarefun() {
     
     softdockerfun() {
         beforeMenu(){
-            _blue "> ---  当前目录: [ $(pwd) ] ---- < v:${branch}-$selfversion"
+            _blue "> ---  当前目录: [ $(pwd) ] ---- < v:$selfversion"
             echo
             if command -v docker &>/dev/null; then
                 _green "docker 已安装: $(docker --version 2>/dev/null)"

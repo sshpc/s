@@ -1,6 +1,6 @@
 systemfun() {
     beforeMenu(){
-    _blue "> ---  当前目录: [ $(pwd) ] ---- < v:${branch}-$selfversion"
+    _blue "> ---  当前目录: [ $(pwd) ] ---- < v:$selfversion"
     echo
     _yellow "当前菜单: $menuname "
     echo
@@ -917,6 +917,8 @@ systemfun() {
 
 
     updateservername(){
+        # 严格模式放进子 shell：函数返回时不会把 -euo pipefail 泄漏到全局 shell
+        (
         set -euo pipefail
 
         # 检查是否以root权限运行（修改主机名和hosts需要root）
@@ -974,6 +976,8 @@ systemfun() {
         echo "提示："
         echo "1. 部分程序可能需要重启才能识别新主机名（如SSH服务：sudo systemctl restart sshd）"
         echo "2. 若需立即在当前终端生效，可执行：exec bash"
+        )
+        return $?
     }
 
     menuname='首页/系统'

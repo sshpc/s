@@ -1,6 +1,6 @@
 servicefun() {
     beforeMenu(){
-    _blue "> ---  当前目录: [ $(pwd) ] ---- < v:${branch}-$selfversion"
+    _blue "> ---  当前目录: [ $(pwd) ] ---- < v:$selfversion"
     echo
     _yellow "当前菜单: $menuname "
     echo
@@ -359,6 +359,8 @@ servicefun() {
 
 
     upservicetime(){
+       # 严格模式放进子 shell：函数返回时不会把 -euo pipefail 泄漏到全局 shell
+       (
        set -euo pipefail
 
         # 临时文件存储服务信息
@@ -429,6 +431,8 @@ servicefun() {
 
         # 清理临时文件
         rm -f "$temp_file"
+       )
+       return $?
     }
 
 

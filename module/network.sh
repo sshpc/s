@@ -1,7 +1,7 @@
 networkfun() {
 
     beforeMenu(){
-    _blue "> ---  当前目录: [ $(pwd) ] ---- < v:${branch}-$selfversion"
+    _blue "> ---  当前目录: [ $(pwd) ] ---- < v:$selfversion"
     echo
     _yellow "当前菜单: $menuname "
     echo
@@ -872,7 +872,7 @@ EOF
         tcpcc=$(sysctl net.ipv4.tcp_congestion_control | awk -F ' ' '{print $3}')
 
         beforeMenu(){
-            _blue "> ---  当前目录: [ $(pwd) ] ---- < v:${branch}-$selfversion"
+            _blue "> ---  当前目录: [ $(pwd) ] ---- < v:$selfversion"
             echo
             _yellow "当前菜单: $menuname "
             echo

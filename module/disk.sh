@@ -1,6 +1,6 @@
 diskfun() {
     beforeMenu(){
-    _blue "> ---  当前目录: [ $(pwd) ] ---- < v:${branch}-$selfversion"
+    _blue "> ---  当前目录: [ $(pwd) ] ---- < v:$selfversion"
     echo
     _yellow "当前菜单: $menuname "
     echo
@@ -20,9 +20,9 @@ diskfun() {
             is_lvm="no"
         fi
 
-        echo -e "\n${_green}根设备:${_reset}        $root_dev"
-        echo -e "${_green}文件系统类型:${_reset}  $fs_type"
-        echo -e "${_green}是否为 LVM:${_reset}    $is_lvm"
+        _green "根设备:        $root_dev"
+        _green "文件系统类型:  $fs_type"
+        _green "是否为 LVM:    $is_lvm"
 
         # 根分区使用率条
         _blue "\n根分区使用率"
@@ -224,6 +224,8 @@ diskfun() {
 
     #扩容根分区
     expandroot(){
+        # 严格模式放进子 shell：函数返回时不会把 -euo pipefail 泄漏到全局 shell
+        (
         set -euo pipefail
         
         # helpers
@@ -402,7 +404,8 @@ diskfun() {
         
         echo
         df -h /
-        
+        )
+        return $?
     }
 
     formatotherdisks(){

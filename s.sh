@@ -792,11 +792,12 @@ selfsetting(){
     
     #移除脚本
     removeself() {
-        rm -rf $installdir/core/*
-        rm -rf $installdir/config/*
-        rm -rf $installdir/module/*
-        rm -rf $installdir/version
-        rm -rf $installdir/modules.conf
+        [[ -n "${installdir:-}" && -d "$installdir" ]] || { _red "安装目录无效，已中止"; return 1; }
+        rm -rf -- "${installdir:?}/core"/* 2>/dev/null
+        rm -rf -- "${installdir:?}/config"/*
+        rm -rf -- "${installdir:?}/module"/*
+        rm -rf -- "${installdir:?}/version"
+        rm -rf -- "${installdir:?}/modules.conf"
     }
     
     #卸载脚本
@@ -813,7 +814,7 @@ selfsetting(){
         
         read -ep "是否删除配置&日志&备份 (y/n, 默认n): " delconf
         if [[ "$delconf" == "y" ]]; then
-            rm -rf "$installdir" /bin/s
+            [[ -n "${installdir:-}" && "$installdir" != "/" ]] && rm -rf -- "${installdir:?}" /bin/s
             _green "已删除配置、日志和备份"
         else
             _yellow "保留了配置、日志和备份"
@@ -1104,7 +1105,7 @@ exceptionfun(){
         if [ -e "./speedtest-cli/speedtest" ]; then
             rm -rf ./speedtest-cli
         fi
-        [[ -d "$installdir/tmp" ]] && rm -rf $installdir/tmp
+        [[ -d "$installdir/tmp" ]] && rm -rf -- "${installdir:?}/tmp"
         exit 1
     }
     trap _exit INT QUIT TERM
@@ -1117,13 +1118,9 @@ exceptionfun(){
         
         CMD_WHITELIST=("sleep" "clear" "tr" "wc" "cat" "awk" "sort" "sed")
         
-        declare -A WHITELIST_MAP
-        for w in "${CMD_WHITELIST[@]}"; do
-            WHITELIST_MAP["$w"]=1
-        done
-        
         in_whitelist() {
             local c="$1"
+            local w
             for w in "${CMD_WHITELIST[@]}"; do
                 if [[ "$c" == "$w" ]]; then
                     return 0
@@ -1138,13 +1135,13 @@ exceptionfun(){
             fi
             local cmd="${BASH_COMMAND%% *}"
             
-            if [[ -n "${WHITELIST_MAP["$cmd_name"]}" ]]; then
+            if in_whitelist "$cmd"; then
                 return 0
             fi
             
             if [ "$(type -t "$cmd" 2>/dev/null)" = "file" ]; then
                 local log_time=$(date '+%F %T')
-                printf "%s [%d] %s\n" "$log_time" "$$" "$BASH_COMMAND" >> "$LOGFILE"
+                printf "%s [%d] %s\n" "$log_time" "$$" "$BASH_COMMAND" >&19
             fi
         }
         trap BASH_COMMAND_LOGGER DEBUG

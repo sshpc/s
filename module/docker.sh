@@ -24,7 +24,7 @@ dockerfun() {
     # ==========================================================
 
     beforeMenu(){
-    _blue "> ---  当前目录: [ $(pwd) ] ---- < v:${branch}-$selfversion"
+    _blue "> ---  当前目录: [ $(pwd) ] ---- < v:$selfversion"
     echo
     _yellow "当前菜单: $menuname "
     echo
