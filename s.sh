@@ -217,35 +217,468 @@ check_and_install() {
 }
 
 
-# 通用下载函数：从镜像列表中依次尝试下载文件
-download_file() {
-    local filename="$1"   # 要下载的文件名（带路径，如 module/status.sh）
-    local output="$2"     # 输出路径（完整路径，不只是目录）
-    local timeout=3
-    
-    for base in "${proxylinks[@]}"; do
-        wget -q --timeout="$timeout" "${base}/sshpc/s/main/$filename" -O "$output"
-        if [[ -s "$output" ]]; then
-            return 0
-        else
-            rm -f "$output"
+# ==================== 下载进度（docker pull 风格） ====================
+# download_file  <仓库内路径> <输出路径>   单个文件，独占一行实时进度
+# download_batch <仓库内路径>...           多个文件并发下载，多行进度同时刷新
+# 终端不是 TTY（被重定向/日志）时自动降级为静默，不输出控制字符。
+# 可调环境变量：_DL_TIMEOUT 单源超时(默认4s)  _DL_ROUNDS 重试轮数(默认2)
+_DL_TIMEOUT="${_DL_TIMEOUT:-4}"
+_DL_ROUNDS="${_DL_ROUNDS:-2}"
+_DL_PIDS=()
+_DL_COLOR=0        # 1=输出颜色（仅在真 TTY 下由 _dl_watch 打开）
+_DL_DREW=0         # 1=看板已原地绘制（否则调用方退回打印静态结果）
+_DL_WGET_PID=''    # 当前 wget 的 pid，供退出时精确干掉
+# 退出哨兵：放在 /tmp（installdir/tmp 会在退出时被整个删掉），
+# 后台下载的每个轮询周期都会看它一眼，见到就立刻收手。
+_DL_ABORT_FILE="${TMPDIR:-/tmp}/.s-dl-abort.$$"
+rm -f "$_DL_ABORT_FILE" 2>/dev/null
+# 顺手打扫上次被 kill -9 之类硬杀留下的哨兵（进程已不在了才删）
+for _dl_stale in "${TMPDIR:-/tmp}"/.s-dl-abort.*; do
+    [[ -e "$_dl_stale" ]] || continue
+    _dl_sp="${_dl_stale##*.}"
+    [[ "$_dl_sp" =~ ^[0-9]+$ ]] && ! kill -0 "$_dl_sp" 2>/dev/null && rm -f "$_dl_stale" 2>/dev/null
+done
+unset _dl_stale _dl_sp
+
+declare -A _DL_SIZECACHE=()
+
+# 终端列数（拿不到按 80）
+_dl_cols() {
+    local c
+    c=$(tput cols 2>/dev/null)
+    [[ "$c" =~ ^[0-9]+$ ]] || c=80
+    (( c < 40 )) && c=40
+    printf '%s' "$c"
+}
+
+# 字节数转 1.2K/3.4M/5.6G（纯 bash 运算，不起子进程）
+_dl_human_to() {
+    local __out="$1" n="${2:-0}"
+    [[ "$n" =~ ^[0-9]+$ ]] || n=0
+    if (( n >= 1073741824 )); then
+        printf -v "$__out" '%d.%dG' $(( n / 1073741824 )) $(( (n % 1073741824) * 10 / 1073741824 ))
+    elif (( n >= 1048576 )); then
+        printf -v "$__out" '%d.%dM' $(( n / 1048576 )) $(( (n % 1048576) * 10 / 1048576 ))
+    elif (( n >= 1024 )); then
+        printf -v "$__out" '%d.%dK' $(( n / 1024 )) $(( (n % 1024) * 10 / 1024 ))
+    else
+        printf -v "$__out" '%dB' "$n"
+    fi
+}
+
+# 取来源站点的 host，用作进度行里的“来源”
+_dl_host() {
+    local u="$1"
+    u="${u#http://}"
+    u="${u#https://}"
+    printf '%s' "${u%%/*}"
+}
+
+# 下载日志（失败/成功各记一行，便于事后排查）
+_dl_log() {
+    local f="${installdir}/log/download.log"
+    [[ -d "${installdir}/log" ]] || return 0
+    printf '%s %s\n' "$(date '+%F %T')" "$*" >> "$f" 2>/dev/null
+}
+
+# 脚本正在退出（下载任务必须自尽，否则会一直往被删掉的目录里写状态）
+_dl_aborted() {
+    [[ -n "$_DL_ABORT_FILE" && -e "$_DL_ABORT_FILE" ]]
+}
+
+# 原子写入进度状态：name state size total source round
+# 目录已被清掉（脚本正在退出）时静默放弃：重定向失败的话是 bash 自己打的，
+# 命令上的 2>/dev/null 压不住，所以必须先判断目录还在不在。
+_dl_status() {
+    local sf="$1"
+    shift
+    [[ -n "$sf" && -d "${sf%/*}" ]] || return 0
+    { printf '%s\n' "$*" > "${sf}.tmp" && mv -f "${sf}.tmp" "$sf"; } 2>/dev/null
+    return 0
+}
+
+# 远端文件大小（缓存，拿不到返回 0，进度退化为已下载量）
+_dl_remote_size() {
+    local url="$1" size=0
+    if [[ -n "${_DL_SIZECACHE[$url]+x}" ]]; then
+        printf '%s' "${_DL_SIZECACHE[$url]}"
+        return 0
+    fi
+    if command -v curl >/dev/null 2>&1; then
+        size=$(curl -sIL --max-time 3 "$url" 2>/dev/null |
+            awk 'tolower($0) ~ /^content-length:/ {v = $2} END {gsub(/\r/, "", v); print v + 0}')
+    fi
+    if [[ ! "$size" =~ ^[0-9]+$ ]] || (( size == 0 )); then
+        if command -v wget >/dev/null 2>&1; then
+            size=$(wget --spider -S --timeout=3 --tries=1 -q "$url" 2>&1 |
+                awk 'tolower($0) ~ /content-length:/ {v = $2} END {gsub(/\r/, "", v); print v + 0}')
         fi
+    fi
+    [[ "$size" =~ ^[0-9]+$ ]] || size=0
+    _DL_SIZECACHE[$url]="$size"
+    printf '%s' "$size"
+}
+
+# 生成进度条主体并写进变量：<变量名> <百分比| -1 表示未知> <宽度>
+_dl_bar_to() {
+    local __out="$1" pct="$2" w="$3" fill _bar _rest
+    if (( pct < 0 )); then
+        printf -v _bar '%*s' "$w" ''
+        printf -v "$__out" '%s' "${_bar// /.}"
+        return 0
+    fi
+    fill=$(( pct * w / 100 ))
+    (( fill > w )) && fill=$w
+    if (( fill >= w )); then
+        printf -v _bar '%*s' "$w" ''
+        printf -v "$__out" '%s' "${_bar// /=}"
+        return 0
+    fi
+    (( fill > 0 )) && fill=$(( fill - 1 ))
+    printf -v _bar '%*s' "$fill" ''
+    printf -v _rest '%*s' "$(( w - fill - 1 ))" ''
+    printf -v "$__out" '%s>%s' "${_bar// /=}" "$_rest"
+}
+
+# 兼容旧用法：直接打印进度条主体
+_dl_bar() {
+    local _b
+    _dl_bar_to _b "$1" "$2"
+    printf '%s' "$_b"
+}
+
+# 把一行进度拼进变量（不起子进程、不直接写终端）
+# 用法：_dl_line_to <变量名> <状态文件> <旋转字符> <进度条宽> [整行宽，0=不补齐]
+# 补齐用空格覆盖旧内容，而不是 \033[K 擦除：擦除会在终端上留下“空白行”的中间态
+_dl_line_to() {
+    local __out="$1" sf="$2" spin="$3" barw="$4" width="${5:-0}"
+    local name='?' state=wait size=0 total=0 source='-' round=0
+    if [[ -r "$sf" ]]; then
+        read -r name state size total source round < "$sf" 2>/dev/null
+    fi
+    [[ "$size" =~ ^[0-9]+$ ]] || size=0
+    [[ "$total" =~ ^[0-9]+$ ]] || total=0
+
+    local icon color=36 pct=-1
+    case "$state" in
+        ok)    icon='+' ; color=32 ;;
+        fail)  icon='x' ; color=31 ;;
+        retry) icon='~' ; color=33 ;;
+        run)   icon="$spin" ;;
+        *)     icon=' ' ; color=90 ;;
+    esac
+    (( total > 0 )) && pct=$(( size * 100 / total ))
+    (( pct > 100 )) && pct=100
+
+    local bar human_cur human_tot pctxt src plain pad spaces=''
+    _dl_bar_to bar "$pct" "$barw"
+    _dl_human_to human_cur "$size"
+    _dl_human_to human_tot "$total"
+    if (( total <= 0 )); then
+        pctxt='--'
+    elif (( pct < 0 )); then
+        pctxt='  -'
+    else
+        pctxt="$pct"
+    fi
+    src="${source:0:12}"
+    (( round > 1 )) && src="r${round}:${src}"
+    src="${src:0:12}"          # 重试前缀也算进宽度，避免行尾折行
+    [[ -z "$name" || "$name" == '?' ]] && name='(待开始)'
+
+    printf -v plain '%s %-20.20s [%s] %3s%% %6s/%-6s %s' \
+        "$icon" "$name" "$bar" "$pctxt" "$human_cur" "$human_tot" "$src"
+    if (( width > 0 )); then
+        pad=$(( width - ${#plain} ))
+        if (( pad > 0 )); then
+            printf -v spaces '%*s' "$pad" ''
+            plain+="$spaces"
+        fi
+    fi
+
+    if (( _DL_COLOR )); then
+        printf -v "$__out" '\033[0;%sm%s\033[0m %-20.20s [\033[0;36m%s\033[0m] %3s%% %6s/%-6s \033[90m%s\033[0m%s' \
+            "$color" "$icon" "$name" "$bar" "$pctxt" "$human_cur" "$human_tot" "$src" "$spaces"
+    else
+        printf -v "$__out" '%s' "$plain"
+    fi
+}
+
+# 输出一行进度（不换行，静态输出用）
+_dl_line() {
+    local _l
+    _dl_line_to _l "$1" "$2" "$3"
+    printf '%s' "$_l"
+}
+
+# 读取状态文件里的 state 字段
+# 读取状态文件里 state 字段到变量（不起子进程）
+_dl_state_to() {
+    local __out="$1" st='wait'
+    if [[ -r "$2" ]]; then
+        read -r _ st _ < "$2" 2>/dev/null
+    fi
+    printf -v "$__out" '%s' "$st"
+}
+
+_dl_state() {
+    local _s
+    _dl_state_to _s "$1"
+    printf '%s' "$_s"
+}
+
+# 守护渲染：等 _DL_PIDS 全部结束，期间原地刷新 n 行
+# 不闪的三条：①整帧在内存拼好，一次 printf 写出（终端只重绘一次）
+#             ②内容没变的行只发一个换行跳过，不重写那块像素
+#             ③不用 \033[K 擦除（会闪出空白），改为整行补空格覆盖
+_dl_watch() {
+    local -a sfs=("$@")
+    local n=${#sfs[@]}
+    local tty=0
+    [ -t 1 ] && tty=1
+    local cols rows barw linew
+    cols=$(_dl_cols)
+    rows=$(tput lines 2>/dev/null)
+    [[ "$rows" =~ ^[0-9]+$ ]] || rows=24
+    (( rows < 8 )) && rows=8
+    barw=$(( cols - 59 ))
+    (( barw > 24 )) && barw=24
+    (( barw < 8 )) && barw=8
+    linew=$(( cols - 1 ))          # 留最后一列，永不触发自动换行
+    (( cols < 60 )) && tty=0       # 太窄就放弃原地刷新
+    (( n > rows - 2 )) && tty=0    # 行数超出屏幕就放弃，别滚屏错乱
+
+    local spinstr='|/-\' si=0 i drawn=0 ndone=0 state alive
+    local ch frame ln
+    local -a prev=()
+
+    (( tty )) && { printf '\033[?25l'; _DL_COLOR=1; _DL_DREW=1; }    # 隐藏光标 + 开颜色
+
+    while :; do
+        ndone=0
+        alive=0
+        for (( i = 0; i < n; i++ )); do
+            _dl_state_to state "${sfs[$i]}"
+            if [[ "$state" == ok || "$state" == fail ]]; then
+                ndone=$(( ndone + 1 ))
+            fi
+            if [ ${#_DL_PIDS[@]} -gt 0 ] && kill -0 "${_DL_PIDS[$i]}" 2>/dev/null; then
+                alive=$(( alive + 1 ))
+            fi
+        done
+        if (( tty )); then
+            ch="${spinstr:si:1}"
+            si=$(( (si + 1) % 4 ))
+            frame=''
+            # 回到块首：上移 n-1 行再回到行首。绝不发 \033[nA + 末尾换行，
+            # 那样当块贴到屏幕底部时会每帧触发一次滚屏，整屏内容往上爬。
+            (( drawn > 0 && n > 1 )) && frame+=$'\033['"$(( n - 1 ))"'A'
+            for (( i = 0; i < n; i++ )); do
+                frame+=$'\r'
+                _dl_line_to ln "${sfs[$i]}" "$ch" "$barw" "$linew"
+                if [[ "${prev[$i]:-}" != "$ln" ]]; then
+                    prev[$i]="$ln"
+                    frame+="$ln"        # 只有变化的行才重写像素
+                fi
+                (( i < n - 1 )) && frame+=$'\n'
+            done
+            printf '%s' "$frame"        # 一次 write，整帧同时上屏
+            drawn=$n
+        fi
+
+        if _dl_aborted; then            # 脚本在退出：马上收尾，别继续画
+            break
+        fi
+        (( ndone >= n )) && break
+        (( alive == 0 )) && break
+        sleep 0.2
     done
-    
+
+    if _dl_aborted; then              # 退出路径：只把光标交还，不重绘残行
+        if (( tty )); then
+            _DL_COLOR=0
+            printf '\033[?25h'
+        fi
+        return 0
+    fi
+
+    if (( tty )); then
+        frame=''                      # 收尾补一帧，确保最末屏是终态
+        (( drawn > 0 && n > 1 )) && frame+=$'\033['"$(( n - 1 ))"'A'
+        for (( i = 0; i < n; i++ )); do
+            frame+=$'\r'
+            _dl_line_to ln "${sfs[$i]}" '+' "$barw" "$linew"
+            if [[ "${prev[$i]:-}" != "$ln" ]]; then
+                prev[$i]="$ln"
+                frame+="$ln"
+            fi
+            (( i < n - 1 )) && frame+=$'\n'
+        done
+        frame+=$'\n'                  # 收尾这一次换行，把光标交给块下方
+        _DL_COLOR=0
+        printf '%s\033[?25h' "$frame"  # 恢复光标
+    fi
+    return 0
+}
+
+# 文件当前大小（不存在算 0）
+_dl_filesize() {
+    local f="$1" sz
+    if [[ -n "$f" && -f "$f" ]]; then
+        sz=$(stat -c %s "$f" 2>/dev/null)
+    else
+        sz=0
+    fi
+    [[ "$sz" =~ ^[0-9]+$ ]] || sz=0
+    printf '%s' "$sz"
+}
+
+# 单源拉取：wget 后台跑 + 轮询文件大小上报进度
+_dl_fetch() {
+    local url="$1" output="$2" sf="$3" filename="$4" total="$5" source="$6" round="$7" timeout="$8"
+    local pid rc size
+    _dl_aborted && return 1
+    rm -f "$output" 2>/dev/null
+    wget -q --timeout="$timeout" --tries=1 -O "$output" "$url" >/dev/null 2>&1 &
+    pid=$!
+    _DL_WGET_PID=$pid
+    while kill -0 "$pid" 2>/dev/null; do
+        if _dl_aborted || [[ ! -d "${sf%/*}" ]]; then   # 脚本在退出：别留后台进程
+            kill -9 "$pid" 2>/dev/null
+            wait "$pid" 2>/dev/null
+            _DL_WGET_PID=''
+            return 1
+        fi
+        size=$(_dl_filesize "$output")
+        _dl_status "$sf" "$filename" run "$size" "$total" "$source" "$round"
+        sleep 0.15
+    done
+    wait "$pid" 2>/dev/null
+    rc=$?
+    _DL_WGET_PID=''
+    size=$(_dl_filesize "$output")
+
+    if (( rc == 0 && size > 0 )); then
+        (( total > 0 )) || total=$size
+        _dl_status "$sf" "$filename" ok "$size" "$total" "$source" "$round"
+        _dl_log "OK   round=$round src=$source file=$filename size=$size"
+        return 0
+    fi
+    _dl_log "FAIL round=$round src=$source file=$filename"
     return 1
 }
 
-# 下载文件（后台模式，用于并发下载）
+# 单个文件的完整下载流程：多来源 × 多轮
+_dl_job() {
+    local filename="$1" output="$2" sf="$3"
+    local base url total source round
+    local -a bases=("${proxylinks[@]}")
+
+    mkdir -p "$(dirname "$output")" 2>/dev/null
+    _dl_status "$sf" "$filename" wait 0 0 '-' 0
+
+    for (( round = 1; round <= _DL_ROUNDS; round++ )); do
+        for base in "${bases[@]}"; do
+            _dl_aborted && return 1      # 脚本在退出：别再试下一个源
+            source=$(_dl_host "$base")
+            url="${base}/sshpc/s/main/${filename}"
+            total=$(_dl_remote_size "$url")
+            _dl_status "$sf" "$filename" run 0 "$total" "$source" "$round"
+            if _dl_fetch "$url" "$output" "$sf" "$filename" "$total" "$source" "$round" "$_DL_TIMEOUT"; then
+                return 0
+            fi
+            _dl_aborted && return 1
+            rm -f "$output" 2>/dev/null
+            _dl_status "$sf" "$filename" retry 0 "$total" "$source" "$round"
+        done
+    done
+
+    _dl_status "$sf" "$filename" fail 0 0 '-' "$_DL_ROUNDS"
+    return 1
+}
+
+# 下载单个文件（串行，自己一行进度）
+download_file() {
+    local filename="$1"   # 要下载的文件名（带路径，如 module/status.sh）
+    local output="$2"     # 输出路径（完整路径，不只是目录）
+    [[ -n "$filename" && -n "$output" ]] || return 1
+
+    local dir="${installdir}/tmp/dldash"
+    mkdir -p "$dir" 2>/dev/null
+    local sf="$dir/single.$$.${RANDOM}"
+    : > "$sf" 2>/dev/null
+
+    _dl_job "$filename" "$output" "$sf" &
+    local pid=$!
+
+    _DL_DREW=0
+    if [ -t 1 ] && [[ -z "$_DL_NOPROGRESS" ]]; then
+        _DL_PIDS=("$pid")
+        _dl_watch "$sf"
+    fi
+
+    wait "$pid" 2>/dev/null
+    local rc=$?
+    if (( ! _DL_DREW )) && [[ -z "$_DL_NOPROGRESS" ]] && ! _dl_aborted; then  # 没有原地看板：补一行最终结果
+        _dl_line "$sf" '-' 20
+        printf '\n'
+    fi
+    rm -f "$sf" 2>/dev/null
+    return $rc
+}
+
+# 并发下载多个文件：每个文件一行，进度同时刷新（docker pull 风格）
+download_batch() {
+    local -a names=("$@")
+    local n=${#names[@]}
+    (( n > 0 )) || return 0
+
+    local dir="${installdir}/tmp/dldash"
+    rm -rf "$dir" 2>/dev/null
+    mkdir -p "$dir" 2>/dev/null
+    dir="${dir}/b$$.${RANDOM}"      # 每次调用独立，避免并发批次互删状态
+    mkdir -p "$dir" 2>/dev/null
+
+    local -a sfs=() pids=()
+    local i=0 name sf outdir="${_DL_OUTDIR:-$installdir}"
+    for name in "${names[@]}"; do
+        i=$(( i + 1 ))
+        sf="$dir/j$i"
+        : > "$sf" 2>/dev/null
+        _dl_job "$name" "${outdir}/${name}" "$sf" &
+        pids+=($!)
+        sfs+=("$sf")
+    done
+
+    _DL_PIDS=("${pids[@]}")
+    _DL_DREW=0
+    _dl_watch "${sfs[@]}"
+
+    local rc=0 state
+    for (( i = 0; i < n; i++ )); do
+        wait "${pids[$i]}" 2>/dev/null || rc=1
+    done
+    for (( i = 0; i < n; i++ )); do
+        state=$(_dl_state "${sfs[$i]}")
+        [[ "$state" == "ok" ]] || rc=1
+    done
+
+    if (( ! _DL_DREW )) && ! _dl_aborted; then   # 非 TTY / 无看板：逐行打印结果
+        for (( i = 0; i < n; i++ )); do
+            _dl_line "${sfs[$i]}" '-' 20
+            printf '\n'
+        done
+    fi
+
+    rm -rf "$dir" 2>/dev/null
+    return $rc
+}
+
+# 兼容旧调用：后台下载（调用方自己 pids+=($!)）
 download_file_bg() {
     local filename="$1"
-    local output="$installdir/$filename"
-    
-    (
-        if ! download_file "$filename" "$output"; then
-            _red "文件 $filename 下载失败！"
-            exit 1
-        fi
-    ) &
+    local output="${2:-$installdir/$filename}"
+    download_file "$filename" "$output" &
 }
 
 #解析ini
@@ -398,16 +831,19 @@ modules_install() {
     esac
 
     
-    # 并发下载处理
+    # 并发下载处理（每个模块一行实时进度）
     if [[ ${#to_download[@]} -gt 0 ]]; then
-        local pids=()
+        local -a files=()
         for m in "${to_download[@]}"; do
-            download_file_bg "module/${m}.sh"
-            pids+=($!)
+            [[ -f "$installdir/module/${m}.sh" ]] && continue
+            files+=("module/${m}.sh")
         done
-        _yellow "模块下载中"
-        loadingprogressbar "${pids[@]}"
-        wait  # 等待所有下载完成
+        if [[ ${#files[@]} -gt 0 ]]; then
+            _yellow "模块下载中"
+            download_batch "${files[@]}" || _red "部分模块下载失败，可用 安装模块 重试"
+        else
+            _green "模块均已存在"
+        fi
     fi
 }
 
@@ -848,40 +1284,28 @@ selfsetting(){
 
         _blue "尝试下载最新版脚本和版本信息..."
         local ok=0
+        local -a core=("s.sh" "version" "modules.conf")
 
-        if download_file "s.sh" "$stage/s.sh"; then
-            _green "s.sh 下载成功"
+        _DL_OUTDIR="$stage"
+        if download_batch "${core[@]}"; then
+            _green "脚本与配置下载成功"
         else
-            _red "s.sh 下载失败"
-            ok=1
-        fi
-
-        if download_file "version" "$stage/version"; then
-            _green "version 下载成功"
-        else
-            _red "version 下载失败"
-            ok=1
-        fi
-
-        if download_file "modules.conf" "$stage/modules.conf"; then
-            _green "modules.conf 下载成功"
-        else
-            _red "modules.conf 下载失败"
+            _red "脚本或配置下载失败"
             ok=1
         fi
 
         if [[ $ok -eq 0 ]]; then
             local m
+            local -a mods=()
             for m in $(list_all_modules_from_conf "$stage/modules.conf"); do
                 m=$(echo "$m" | tr -d '\r\n\t')
                 [[ -z "$m" ]] && continue
-                if download_file "module/${m}.sh" "$stage/module/${m}.sh"; then
-                    _green "模块 $m 下载成功"
-                else
-                    _red "模块 $m 下载失败"
-                    ok=1
-                fi
+                mods+=("module/${m}.sh")
             done
+            if [[ ${#mods[@]} -gt 0 ]]; then
+                download_batch "${mods[@]}" || ok=1
+            fi
+            _DL_OUTDIR=""
         fi
 
         if [[ $ok -ne 0 ]]; then
@@ -1071,19 +1495,16 @@ loadfilefun() {
         'modules.conf'
     )
     
-    # 并行下载缺失文件
-    pids=()
+    # 并行下载缺失文件（每个文件一行实时进度）
+    local -a missing=()
     for shfile in "${shfiles[@]}"; do
-        if [[ ! -s "$installdir/$shfile" ]]; then
-            download_file_bg "$shfile"
-            pids+=($!)
-        fi
+        [[ -s "$installdir/$shfile" ]] || missing+=("$shfile")
     done
-    
-    if [[ ${#pids[@]} -gt 0 ]]; then
+
+    if [[ ${#missing[@]} -gt 0 ]]; then
         echo
         _yellow '核心文件下载'
-        loadingprogressbar "${pids[@]}"
+        download_batch "${missing[@]}" || _red '核心文件下载失败，请检查网络后重跑'
         wait
     fi
     
@@ -1102,10 +1523,20 @@ loadfilefun() {
 #终止和日志函数
 exceptionfun(){
     _exit() {
+        printf '\033[?25h' 2>/dev/null   # 中断时别把光标留在隐藏状态
+        # 先立哨兵再删目录：后台的下载循环每个轮询周期都会看这个文件，
+        # 见到就杀掉自己的 wget 并退出。不给它们这一步的话，它们会一直
+        # 往已经删掉的状态目录里写，bash 每周期报一次错，返回提示符后还在刷。
+        # 哨兵放在 /tmp 且带 $$ 后缀，下次启动会先删掉它，不会误伤新进程。
+        [[ -n "$_DL_ABORT_FILE" ]] && : > "$_DL_ABORT_FILE" 2>/dev/null
         if [ -e "./speedtest-cli/speedtest" ]; then
             rm -rf ./speedtest-cli
         fi
         [[ -d "$installdir/tmp" ]] && rm -rf -- "${installdir:?}/tmp"
+        # 给后台进程几秒时间看到哨兵，然后把它清掉，别在 /tmp 里留垃圾
+        if [[ -n "$_DL_ABORT_FILE" ]]; then
+            ( sleep 3; rm -f "$_DL_ABORT_FILE" ) >/dev/null 2>&1 &
+        fi
         exit 1
     }
     trap _exit INT QUIT TERM
@@ -1116,7 +1547,8 @@ exceptionfun(){
         exec 19>>"$LOGFILE"
         set -T
         
-        CMD_WHITELIST=("sleep" "clear" "tr" "wc" "cat" "awk" "sort" "sed")
+        CMD_WHITELIST=("sleep" "clear" "tr" "wc" "cat" "awk" "sort" "sed"
+                       "stat" "wget" "curl" "tput" "mv" "rm" "mkdir" "date")
         
         in_whitelist() {
             local c="$1"
@@ -1158,6 +1590,8 @@ selfversionfun() {
     
     getlatestversion() {
         (
+            # 后台静默探测版本：不能往菜单上画进度条
+            _DL_NOPROGRESS=1
             local tmpfile="$latestversion_file.tmp"
             if download_file "version" "$tmpfile"; then
                 mv "$tmpfile" "$latestversion_file"
