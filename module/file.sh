@@ -4,6 +4,18 @@ filefun() {
     echo
     _yellow "当前菜单: $menuname "
     echo
+    # 剪贴板状态
+    if [[ -s "${installdir}/config/tmpcopy" ]]; then
+        local _cb_op _cb_src
+        _cb_op=$(sed -n '1p' "${installdir}/config/tmpcopy")
+        _cb_src=$(sed -n '2p' "${installdir}/config/tmpcopy")
+        local _cb_verb="复制"
+        [[ "$_cb_op" == "cut" ]] && _cb_verb="剪切"
+        _blue "剪切板: [$_cb_verb] $_cb_src"
+    else
+        _yellow "剪切板: 空"
+    fi
+    echo
     }
 
     #查看当前路径文件夹
@@ -596,6 +608,199 @@ filefun() {
         echo "$abpath 目录下的 后缀为 $suffix 文件的总行数是: $total"
     }
 
+    # ========== 文件管理：复制/剪切/粘贴/删除/重命名 ==========
+    # 剪贴板文件（保存操作类型与源绝对路径）
+    local _fm_clipboard="${installdir}/config/tmpcopy"
+    local -a _fm_items=()
+    local _fm_selected=""
+
+    # 列出当前目录下的目录和文件（不含隐藏项），序号 | 目录名或文件名
+    _fm_listitems(){
+        echo
+        local -a _dirs=() _files=()
+        local item=""
+        for item in */; do
+            [[ -d "$item" ]] && _dirs+=("${item%/}")
+        done
+        for item in *; do
+            [[ -f "$item" ]] && _files+=("$item")
+        done
+        _fm_items=("${_dirs[@]}" "${_files[@]}")
+        if [[ ${#_fm_items[@]} -eq 0 ]]; then
+            _yellow "当前目录没有可选的目录或文件"
+            return 1
+        fi
+        _blue "序号\t目录名或文件名"
+        local i=0
+        for item in "${_dirs[@]}"; do
+            echo -e "$((++i))\t$item/"
+        done
+        for item in "${_files[@]}"; do
+            echo -e "$((++i))\t$item"
+        done
+        echo
+        return 0
+    }
+
+    # 选择序号，结果写入 _fm_selected
+    _fm_selectitem(){
+        local idx=""
+        read -rp "请输入序号 (0 取消): " idx
+        [[ "$idx" == "0" ]] && { _yellow "已取消"; return 1; }
+        if [[ "$idx" =~ ^[0-9]+$ ]] && (( idx >= 1 && idx <= ${#_fm_items[@]} )); then
+            _fm_selected="${_fm_items[$((idx-1))]}"
+            return 0
+        fi
+        _red "无效的序号"
+        return 1
+    }
+
+    # 取绝对路径
+    _fm_abspath(){
+        local p="$1" r=""
+        if command -v readlink >/dev/null 2>&1; then
+            r=$(readlink -f -- "$p" 2>/dev/null) && { printf '%s' "$r"; return; }
+        fi
+        printf '%s/%s' "$(pwd)" "$p"
+    }
+
+    # 带进度条地复制/移动：op = copy(cp) / cut(mv)
+    _fm_transfer(){
+        local src="$1" op="$2"
+        local target dest srcsize=0 cursize=0 pct=0 filled=0 empty=0
+        target="$(pwd)"
+        dest="$target/$(basename "$src")"
+        srcsize=$(du -sb -- "$src" 2>/dev/null | awk '{print $1}')
+        [[ "$srcsize" =~ ^[0-9]+$ ]] || srcsize=0
+
+        if [[ "$op" == "copy" ]]; then
+            cp -a -- "$src" "$target/" &
+        else
+            mv -- "$src" "$target/" &
+        fi
+        local pid=$!
+
+        local width=30 spin='|/-\' si=0 barf="" bare=""
+        tput civis 2>/dev/null
+        while kill -0 "$pid" 2>/dev/null; do
+            cursize=0
+            if [[ -e "$dest" ]]; then
+                cursize=$(du -sb -- "$dest" 2>/dev/null | awk '{print $1}')
+                [[ "$cursize" =~ ^[0-9]+$ ]] || cursize=0
+            fi
+            pct=0
+            (( srcsize > 0 )) && pct=$(( cursize * 100 / srcsize ))
+            (( pct > 100 )) && pct=100
+            filled=$(( pct * width / 100 ))
+            empty=$(( width - filled ))
+            barf=""; bare=""
+            (( filled > 0 )) && barf=$(printf '█%.0s' $(seq 1 $filled))
+            (( empty > 0 )) && bare=$(printf '░%.0s' $(seq 1 $empty))
+            printf "\r\033[0;36m[%s%s] %3d%%  %s\033[0m" "$barf" "$bare" "$pct" "${spin:si++%4:1}"
+            sleep 0.2
+        done
+        wait "$pid"
+        local rc=$?
+        printf "\r\033[K"
+        tput cnorm 2>/dev/null
+        return $rc
+    }
+
+    # 复制：记录绝对路径到剪贴板
+    filecopy(){
+        _fm_listitems || return 1
+        _fm_selectitem || return 1
+        local src
+        src=$(_fm_abspath "$_fm_selected")
+        mkdir -p "$installdir/config"
+        printf 'copy\n%s\n' "$src" > "$_fm_clipboard" || { _red "写入剪贴板失败"; return 1; }
+        echo
+        _green "已记录复制路径: $src"
+        _yellow "请切换到目标目录后选择“粘贴”"
+    }
+
+    # 剪切：记录绝对路径到剪贴板（粘贴时执行 mv）
+    filecut(){
+        _fm_listitems || return 1
+        _fm_selectitem || return 1
+        local src
+        src=$(_fm_abspath "$_fm_selected")
+        mkdir -p "$installdir/config"
+        printf 'cut\n%s\n' "$src" > "$_fm_clipboard" || { _red "写入剪贴板失败"; return 1; }
+        echo
+        _green "已记录剪切路径: $src"
+        _yellow "请切换到目标目录后选择“粘贴”"
+    }
+
+    # 粘贴：读取剪贴板，确认后复制/移动
+    filepaste(){
+        if [[ ! -s "$_fm_clipboard" ]]; then
+            _yellow "剪贴板为空，请先选择“复制”或“剪切”"
+            return 1
+        fi
+        local op="" src=""
+        op=$(sed -n '1p' "$_fm_clipboard")
+        src=$(sed -n '2p' "$_fm_clipboard")
+        if [[ -z "$src" || ! -e "$src" ]]; then
+            _red "剪贴板中的源已不存在: $src"
+            rm -f "$_fm_clipboard"
+            return 1
+        fi
+        local target confirm=""
+        target="$(pwd)"
+        local verb="复制"
+        [[ "$op" == "cut" ]] && verb="移动"
+        read -rp "是否将 '$src' $verb 到 '$target' ? [y/N]: " confirm
+        [[ "$confirm" =~ ^[Yy]$ ]] || { _yellow "已取消"; return; }
+        if _fm_transfer "$src" "$op"; then
+            _green "已完成: $verb -> $target"
+            [[ "$op" == "cut" ]] && rm -f "$_fm_clipboard"
+        else
+            _red "操作失败，请检查权限或磁盘空间"
+        fi
+    }
+
+    # 删除：默认移入回收站（系统临时目录），输入 d 强制删除
+    filedelete(){
+        _fm_listitems || return 1
+        _fm_selectitem || return 1
+        local src recycle ans=""
+        src=$(_fm_abspath "$_fm_selected")
+        recycle="${TMPDIR:-/tmp}/s_recyclebin"
+        echo
+        _blue "待删除: $src"
+        read -rp "直接回车=移入回收站($recycle) | 输入 d=强制删除 | 其他=取消: " ans
+        case "$ans" in
+            d|D)
+                rm -rf -- "$src" && _green "已强制删除: $src" || _red "删除失败"
+                ;;
+            "")
+                mkdir -p "$recycle" || { _red "无法创建回收站目录"; return 1; }
+                local dest="$recycle/$(basename "$src").$(date +%Y%m%d%H%M%S).$$"
+                mv -- "$src" "$dest" && _green "已移入回收站: $dest" || _red "移入回收站失败"
+                ;;
+            *)
+                _yellow "已取消"
+                ;;
+        esac
+    }
+
+    # 重命名
+    filerename(){
+        _fm_listitems || return 1
+        _fm_selectitem || return 1
+        local src parent newname dest
+        src=$(_fm_abspath "$_fm_selected")
+        parent="$(dirname "$src")"
+        echo
+        read -rp "请输入新名称: " newname
+        [[ -z "$newname" ]] && { _yellow "名称不能为空，已取消"; return 1; }
+        [[ "$newname" == */* ]] && { _red "名称不能包含 /"; return 1; }
+        dest="$parent/$newname"
+        [[ -e "$dest" ]] && { _red "目标已存在: $dest"; return 1; }
+        mv -- "$src" "$dest" && _green "已重命名: $(basename "$src") -> $newname" || _red "重命名失败"
+    }
+
     filesearchfun() {
         searchbyname() {
             read -ep "请输入搜索路径 (默认当前目录): " searchpath
@@ -745,7 +950,7 @@ filefun() {
 
     menuname='首页/文件管理'
     echo "filefun" >$installdir/config/lastfun
-    options=("打包目录tar.gz" packagingdir_targz "解压tar.gz" uncompresseddir_targz "打包目录zip" packagingdir_zip "解压zip" uncompresseddir_zip "打包目录rar" packagingdir_rar "解压rar" uncompresseddir_rar "配置目录权限www-data" chownwwwdata "文件搜索" filesearchfun "统计当前目录占用" statisticsusage  "统计目录文件行数" countfileslines "多线程下载" aria2fun "smb连接" smbfun )
+    options=("复制" filecopy "剪切" filecut "粘贴" filepaste "删除" filedelete "重命名" filerename "打包目录tar.gz" packagingdir_targz "解压tar.gz" uncompresseddir_targz "打包目录zip" packagingdir_zip "解压zip" uncompresseddir_zip "打包目录rar" packagingdir_rar "解压rar" uncompresseddir_rar "配置目录权限www-data" chownwwwdata "文件搜索" filesearchfun "统计当前目录占用" statisticsusage  "统计目录文件行数" countfileslines "多线程下载" aria2fun "smb连接" smbfun )
 
     menu "${options[@]}"
 

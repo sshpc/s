@@ -1,5 +1,4 @@
 #!/bin/bash
-export LANG=en_US.UTF-8
 # 配置区
 # 安装目录 (root登录 /root/s)
 installdir="$HOME/s"
@@ -12,6 +11,17 @@ proxyhost=(
     "https://cdn.gh-proxy.com"
     "https://hk.gh-proxy.com"
 )
+# UTF-8 locale 处理
+_s_locale=""
+for _l in en_US.UTF-8 zh_CN.UTF-8 C.UTF-8; do
+    if locale -a 2>/dev/null | grep -qix "${_l%.UTF-8}.utf8"; then
+        _s_locale="$_l"
+        break
+    fi
+done
+export LANG="${_s_locale:-C.UTF-8}"
+export LC_ALL="${_s_locale:-C.UTF-8}"
+unset _s_locale _l
 
 # 默认主页
 menuname='主页'
@@ -217,22 +227,17 @@ check_and_install() {
 }
 
 
-# ==================== 下载进度（docker pull 风格） ====================
-# download_file  <仓库内路径> <输出路径>   单个文件，独占一行实时进度
-# download_batch <仓库内路径>...           多个文件并发下载，多行进度同时刷新
-# 终端不是 TTY（被重定向/日志）时自动降级为静默，不输出控制字符。
-# 可调环境变量：_DL_TIMEOUT 单源超时(默认4s)  _DL_ROUNDS 重试轮数(默认2)
+# 下载进度
+
 _DL_TIMEOUT="${_DL_TIMEOUT:-4}"
 _DL_ROUNDS="${_DL_ROUNDS:-2}"
 _DL_PIDS=()
-_DL_COLOR=0        # 1=输出颜色（仅在真 TTY 下由 _dl_watch 打开）
-_DL_DREW=0         # 1=看板已原地绘制（否则调用方退回打印静态结果）
-_DL_WGET_PID=''    # 当前 wget 的 pid，供退出时精确干掉
-# 退出哨兵：放在 /tmp（installdir/tmp 会在退出时被整个删掉），
-# 后台下载的每个轮询周期都会看它一眼，见到就立刻收手。
+_DL_COLOR=0        
+_DL_DREW=0         
+_DL_WGET_PID=''    
+
 _DL_ABORT_FILE="${TMPDIR:-/tmp}/.s-dl-abort.$$"
 rm -f "$_DL_ABORT_FILE" 2>/dev/null
-# 顺手打扫上次被 kill -9 之类硬杀留下的哨兵（进程已不在了才删）
 for _dl_stale in "${TMPDIR:-/tmp}"/.s-dl-abort.*; do
     [[ -e "$_dl_stale" ]] || continue
     _dl_sp="${_dl_stale##*.}"
@@ -242,7 +247,6 @@ unset _dl_stale _dl_sp
 
 declare -A _DL_SIZECACHE=()
 
-# 终端列数（拿不到按 80）
 _dl_cols() {
     local c
     c=$(tput cols 2>/dev/null)
@@ -251,7 +255,6 @@ _dl_cols() {
     printf '%s' "$c"
 }
 
-# 字节数转 1.2K/3.4M/5.6G（纯 bash 运算，不起子进程）
 _dl_human_to() {
     local __out="$1" n="${2:-0}"
     [[ "$n" =~ ^[0-9]+$ ]] || n=0
@@ -266,7 +269,6 @@ _dl_human_to() {
     fi
 }
 
-# 取来源站点的 host，用作进度行里的“来源”
 _dl_host() {
     local u="$1"
     u="${u#http://}"
@@ -274,21 +276,16 @@ _dl_host() {
     printf '%s' "${u%%/*}"
 }
 
-# 下载日志（失败/成功各记一行，便于事后排查）
 _dl_log() {
     local f="${installdir}/log/download.log"
     [[ -d "${installdir}/log" ]] || return 0
     printf '%s %s\n' "$(date '+%F %T')" "$*" >> "$f" 2>/dev/null
 }
 
-# 脚本正在退出（下载任务必须自尽，否则会一直往被删掉的目录里写状态）
 _dl_aborted() {
     [[ -n "$_DL_ABORT_FILE" && -e "$_DL_ABORT_FILE" ]]
 }
 
-# 原子写入进度状态：name state size total source round
-# 目录已被清掉（脚本正在退出）时静默放弃：重定向失败的话是 bash 自己打的，
-# 命令上的 2>/dev/null 压不住，所以必须先判断目录还在不在。
 _dl_status() {
     local sf="$1"
     shift
@@ -297,7 +294,6 @@ _dl_status() {
     return 0
 }
 
-# 远端文件大小（缓存，拿不到返回 0，进度退化为已下载量）
 _dl_remote_size() {
     local url="$1" size=0
     if [[ -n "${_DL_SIZECACHE[$url]+x}" ]]; then
@@ -319,7 +315,6 @@ _dl_remote_size() {
     printf '%s' "$size"
 }
 
-# 生成进度条主体并写进变量：<变量名> <百分比| -1 表示未知> <宽度>
 _dl_bar_to() {
     local __out="$1" pct="$2" w="$3" fill _bar _rest
     if (( pct < 0 )); then
@@ -340,16 +335,12 @@ _dl_bar_to() {
     printf -v "$__out" '%s>%s' "${_bar// /=}" "$_rest"
 }
 
-# 兼容旧用法：直接打印进度条主体
 _dl_bar() {
     local _b
     _dl_bar_to _b "$1" "$2"
     printf '%s' "$_b"
 }
 
-# 把一行进度拼进变量（不起子进程、不直接写终端）
-# 用法：_dl_line_to <变量名> <状态文件> <旋转字符> <进度条宽> [整行宽，0=不补齐]
-# 补齐用空格覆盖旧内容，而不是 \033[K 擦除：擦除会在终端上留下“空白行”的中间态
 _dl_line_to() {
     local __out="$1" sf="$2" spin="$3" barw="$4" width="${5:-0}"
     local name='?' state=wait size=0 total=0 source='-' round=0
@@ -404,15 +395,12 @@ _dl_line_to() {
     fi
 }
 
-# 输出一行进度（不换行，静态输出用）
 _dl_line() {
     local _l
     _dl_line_to _l "$1" "$2" "$3"
     printf '%s' "$_l"
 }
 
-# 读取状态文件里的 state 字段
-# 读取状态文件里 state 字段到变量（不起子进程）
 _dl_state_to() {
     local __out="$1" st='wait'
     if [[ -r "$2" ]]; then
@@ -427,10 +415,6 @@ _dl_state() {
     printf '%s' "$_s"
 }
 
-# 守护渲染：等 _DL_PIDS 全部结束，期间原地刷新 n 行
-# 不闪的三条：①整帧在内存拼好，一次 printf 写出（终端只重绘一次）
-#             ②内容没变的行只发一个换行跳过，不重写那块像素
-#             ③不用 \033[K 擦除（会闪出空白），改为整行补空格覆盖
 _dl_watch() {
     local -a sfs=("$@")
     local n=${#sfs[@]}
@@ -444,15 +428,15 @@ _dl_watch() {
     barw=$(( cols - 59 ))
     (( barw > 24 )) && barw=24
     (( barw < 8 )) && barw=8
-    linew=$(( cols - 1 ))          # 留最后一列，永不触发自动换行
-    (( cols < 60 )) && tty=0       # 太窄就放弃原地刷新
-    (( n > rows - 2 )) && tty=0    # 行数超出屏幕就放弃，别滚屏错乱
+    linew=$(( cols - 1 ))          
+    (( cols < 60 )) && tty=0       
+    (( n > rows - 2 )) && tty=0    
 
     local spinstr='|/-\' si=0 i drawn=0 ndone=0 state alive
     local ch frame ln
     local -a prev=()
 
-    (( tty )) && { printf '\033[?25l'; _DL_COLOR=1; _DL_DREW=1; }    # 隐藏光标 + 开颜色
+    (( tty )) && { printf '\033[?25l'; _DL_COLOR=1; _DL_DREW=1; }    
 
     while :; do
         ndone=0
@@ -470,8 +454,6 @@ _dl_watch() {
             ch="${spinstr:si:1}"
             si=$(( (si + 1) % 4 ))
             frame=''
-            # 回到块首：上移 n-1 行再回到行首。绝不发 \033[nA + 末尾换行，
-            # 那样当块贴到屏幕底部时会每帧触发一次滚屏，整屏内容往上爬。
             (( drawn > 0 && n > 1 )) && frame+=$'\033['"$(( n - 1 ))"'A'
             for (( i = 0; i < n; i++ )); do
                 frame+=$'\r'
@@ -1524,16 +1506,11 @@ loadfilefun() {
 exceptionfun(){
     _exit() {
         printf '\033[?25h' 2>/dev/null   # 中断时别把光标留在隐藏状态
-        # 先立哨兵再删目录：后台的下载循环每个轮询周期都会看这个文件，
-        # 见到就杀掉自己的 wget 并退出。不给它们这一步的话，它们会一直
-        # 往已经删掉的状态目录里写，bash 每周期报一次错，返回提示符后还在刷。
-        # 哨兵放在 /tmp 且带 $$ 后缀，下次启动会先删掉它，不会误伤新进程。
         [[ -n "$_DL_ABORT_FILE" ]] && : > "$_DL_ABORT_FILE" 2>/dev/null
         if [ -e "./speedtest-cli/speedtest" ]; then
             rm -rf ./speedtest-cli
         fi
         [[ -d "$installdir/tmp" ]] && rm -rf -- "${installdir:?}/tmp"
-        # 给后台进程几秒时间看到哨兵，然后把它清掉，别在 /tmp 里留垃圾
         if [[ -n "$_DL_ABORT_FILE" ]]; then
             ( sleep 3; rm -f "$_DL_ABORT_FILE" ) >/dev/null 2>&1 &
         fi
