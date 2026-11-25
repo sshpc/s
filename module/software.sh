@@ -7,80 +7,187 @@ softwarefun() {
     }
     
     #下载并执行sh #参数 例: 'vaxilu/x-ui/master/install.sh'
+    # 同一个文件名（如 install.sh）会被多个第三方脚本复用，缓存必须按 URL 隔离，
+    # 否则先下载过的脚本会永远覆盖后续脚本的执行。
     runthirdscript() {
         local url="$1"
         local param="$2"
         local outputdir="$HOME/thirdscript"
         local timeout=3
-        local filename=$(basename "$url")
+        local rawname
+        rawname=$(basename "$url")
 
-        mkdir -p "$outputdir"
+        # 用 URL 的 sha1 前缀生成缓存子目录，保留原始文件名便于识别
+        local cachekey
+        if command -v sha1sum >/dev/null 2>&1; then
+            cachekey=$(printf '%s' "$url" | sha1sum | awk '{print substr($1,1,12)}')
+        else
+            # 兜底：去掉非字母数字字符（不保证唯一，但比共用文件名安全）
+            cachekey=$(printf '%s' "$url" | tr -c '[:alnum:]' '_')
+        fi
+        local cachedir="$outputdir/$cachekey"
+        local filename="$rawname"
+        mkdir -p "$cachedir"
 
-        local filepath="$outputdir/$filename"
+        local filepath="$cachedir/$filename"
         if [[ -s "$filepath" ]]; then
-            bash "$filepath"
-            return 0
+            _yellow "使用缓存脚本：$filepath（如内容过期可手动删除后重试）"
+            bash "$filepath" "$param"
+            return $?
+        fi
+
+        local downloaded=0
+        local -a urlparts=()
+        # 用数组保存完整 URL，避免 URL 中的空格被 wget 拆成多个参数
+        read -r -a urlparts <<< "${url} ${param}"
+        if (( ${#urlparts[@]} == 0 )); then
+            _red "空 URL"
+            return 1
         fi
 
         for base in "${proxylinks[@]}"; do
-            _yellow "尝试从 ${base}/$url 下载..."
-            if wget -q -N -P "$outputdir" --timeout="$timeout" "${base}/$url"; then
-                if [[ -s "$outputdir/$filename" ]]; then
-                    _green "已下载文件：$filename"
-                    chmod +x "$outputdir/$filename"
-                    bash "$outputdir/$filename" "$param"
-                    return 0
-                else
-                    _red "文件为空或下载失败：$filename"
+            local fullurl="${base}/${urlparts[0]}"
+            local tmppath="$filepath.part.$$"
+            # 实时展示本次尝试使用的地址前缀（proxylinks 里的加速 host + 原始前缀）
+            _yellow "使用地址前缀: ${base}/"
+            _blue "下载: $fullurl"
+
+            # 尽量探测远端大小，用于百分比进度条；探测不到则显示已接收字节数
+            local total=0
+            total=$(wget --spider -S --timeout="$timeout" --tries=1 -q "$fullurl" 2>&1 |
+                awk 'tolower($0) ~ /content-length:/ {v = $2} END {gsub(/\r/, "", v); print v + 0}')
+            [[ "$total" =~ ^[0-9]+$ ]] || total=0
+
+            rm -f "$tmppath"
+            wget -q --timeout="$timeout" --tries=1 -O "$tmppath" "$fullurl" >/dev/null 2>&1 &
+            local wpid=$!
+            # 后台下载 + 轮询临时文件大小画进度条（TTY 下原地刷新）
+            while kill -0 "$wpid" 2>/dev/null; do
+                local size=0
+                [[ -f "$tmppath" ]] && size=$(stat -c %s "$tmppath" 2>/dev/null)
+                [[ "$size" =~ ^[0-9]+$ ]] || size=0
+                if [ -t 1 ]; then
+                    if (( total > 0 )); then
+                        local pct=$(( size * 100 / total ))
+                        (( pct > 100 )) && pct=100
+                        local fill=$(( pct * 40 / 100 ))
+                        local bar=$(printf '%*s' "$fill" '' | tr ' ' '=')
+                        local empty=$(printf '%*s' "$((40 - fill))" '' | tr ' ' '.')
+                        printf "\r\033[0;36m下载中 [%s%s] %3d%% (%d/%d bytes) 源:%s\033[0m\033[K" \
+                            "$bar" "$empty" "$pct" "$size" "$total" "${base:0:24}"
+                    else
+                        printf "\r\033[0;36m下载中 [已接收 %d bytes] 源:%s\033[0m\033[K" \
+                            "$size" "${base:0:24}"
+                    fi
                 fi
+                sleep 0.2
+            done
+            wait "$wpid"
+            local rc=$?
+            if [ -t 1 ]; then
+                printf "\r\033[K"
             else
-                _red "下载失败：${base}/$url"
+                echo
+            fi
+
+            if (( rc == 0 )) && [[ -s "$tmppath" ]]; then
+                mv -f "$tmppath" "$filepath"
+                downloaded=1
+                _green "已下载文件：$filepath"
+                break
+            else
+                _red "下载失败：${base}/${urlparts[0]}"
+                rm -f "$tmppath"
             fi
         done
 
-        _red "所有源均下载失败，退出。"
-        return 1
+        if (( downloaded == 0 )); then
+            _red "所有源均下载失败，退出。"
+            return 1
+        fi
+
+        if ! bash -n "$filepath" 2>/dev/null; then
+            _red "脚本语法校验失败，已保留文件供检查：$filepath"
+            return 1
+        fi
+        chmod +x "$filepath"
+        # 透传全部参数：原来只传 $2，多参数场景（如 --abroad）会被截断
+        bash "$filepath" "${urlparts[@]:1}"
     }
 
     
     #更新所有已安装的软件包
     aptupdatefun() {
         dpkg --configure -a
-        if [[ -n $(pgrep -f "apt|apt-get") ]]; then
-            _yellow "→ 终止占用apt的进程..."
-            pgrep -f "apt|apt-get" | xargs kill -9 2>/dev/null
+        # 原逻辑 pgrep -f "apt|apt-get" 会把自己、菜单脚本、编辑器里带 "apt" 字样的
+        # 进程一并 kill -9，误杀风险高；这里改为只提示，不自动强杀。
+        local aptprocs
+        aptprocs=$(pgrep -x apt-get 2>/dev/null; pgrep -x apt 2>/dev/null)
+        if [[ -n "$aptprocs" ]]; then
+            _yellow "→ 检测到 apt 进程仍在运行（PID: $(echo "$aptprocs" | tr '\n' ' ')），等待其结束..."
+            local waited=0
+            while (( waited < 30 )) && pgrep -x apt-get >/dev/null 2>&1; do
+                sleep 1
+                ((waited++))
+            done
+            if pgrep -x apt-get >/dev/null 2>&1 || pgrep -x apt >/dev/null 2>&1; then
+                _red "apt 进程仍未结束，请手动确认后再重试（本脚本不再强杀进程）"
+                next
+                return 1
+            fi
         fi
         _blue "→ 正在更新软件包列表（apt update）..."
-        apt-get update -y
-        _blue "→ 是否升级所有已安装软件包（apt upgrade）？"
-        read -p "输入 y 确认升级，不升级直接回车：" -n 1 -r -t 7 choice
-
-        if [[ $choice =~ ^[Yy]$ ]]; then
-            echo
-            _blue "→ 开始升级软件包（过程可能较长）..."
-            apt-get upgrade -y
-        else
-            _blue "跳过升级"
+        if ! apt-get update -y; then
+            _red "apt update 失败，请检查网络或软件源"
+            next
+            return 1
         fi
-        _blue "更新完成"
+        echo
+        _blue "→ 是否升级所有已安装软件包（apt upgrade）？"
+        # 去掉 7 秒超时：超时会把空输入当成“不升级”，但用户往往没反应过来，
+        # 改成常规读取（Ctrl+C 可随时取消），默认回车仅跳过升级。
+        local choice=""
+        read -r -n 1 -p "输入 y 确认升级，不升级直接回车: " choice || choice=""
+        echo
+
+        if [[ "$choice" =~ ^[Yy]$ ]]; then
+            _blue "→ 开始升级软件包（过程可能较长）..."
+            if apt-get upgrade -y; then
+                _green "软件包升级完成"
+            else
+                _red "apt upgrade 失败，请检查上面的错误信息"
+                next
+                return 1
+            fi
+        else
+            _yellow "跳过升级"
+        fi
+        _green "更新完成"
+        next
     }
     #修复更新
     configureaptfun() {
-        _red '注意这将结束apt|dpkg的全部进程！'
+        _red '注意：这将终止 apt/dpkg 进程并删除锁文件，请确保没有其他终端正在安装软件！'
         waitinput
         _blue '修复更新..'
-        pkill -9 -f 'apt|dpkg'
+        # 原 pkill -9 -f 'apt|dpkg' 会匹配到任意命令行含 apt/dpkg 字样的进程
+        # （包括本脚本自身、编辑器、日志查看命令），改用精确进程名匹配。
+        pkill -9 -x apt-get 2>/dev/null || true
+        pkill -9 -x apt 2>/dev/null || true
+        pkill -9 -x dpkg 2>/dev/null || true
         rm -f /var/lib/dpkg/lock-frontend \
-               /var/lib/dpkg/lock \
-               /var/lib/apt/lists/lock \
-               /var/cache/apt/archives/lock
+              /var/lib/dpkg/lock \
+              /var/lib/apt/lists/lock \
+              /var/cache/apt/archives/lock
         dpkg --configure -a
         apt-get install -f -y
         apt-get update -y
-        apt autoremove --purge -y
-        apt autoclean -y
-        apt clean -y
+        apt-get autoremove --purge -y
+        # 先 clean 再 autoclean：顺序反了会让 clean 无事可做
+        apt-get clean -y
+        apt-get autoclean -y
         _green '修复完成'
+        next
     }
     #安装常用包
     installcomso() {
@@ -135,14 +242,15 @@ softwarefun() {
         menuname='首页/软件/换源'
         options=("大陆" cnmainland "海外" overseas "教育网" cnmainlandedu "getlinuxmirrors大陆" getlinuxmirrorsmain)
         menu "${options[@]}"
-        
+
+        # datevar 含空格和冒号（如 "2026-11-25 01:56:00"），直接拼进文件名会产生
+        # 带空格/冒号的怪文件名；改用紧凑时间戳。
         if [ -f /etc/apt/sources.list.bak ]; then
-            
-            mv /etc/apt/sources.list.bak "/etc/apt/sources.list.bak.$datevar"
-            echo "sources.list.bak 已重命名为 /etc/apt/sources.list.bak.$datevar"
-            
+            local baksuffix
+            baksuffix=$(date +"%Y%m%d_%H%M%S")
+            mv /etc/apt/sources.list.bak "/etc/apt/sources.list.bak.$baksuffix"
+            echo "sources.list.bak 已重命名为 /etc/apt/sources.list.bak.$baksuffix"
         fi
-        
     }
     
     removefun() {
@@ -750,8 +858,14 @@ softwarefun() {
     }
     
     installvasma() {
-        runthirdscript mack-a/v2ray-agent/master/install.sh
-        vasma
+        runthirdscript mack-a/v2ray-agent/master/install.sh || return 1
+        # 原代码直接调用 vasma，但该命令由上游安装脚本在「安装完成」分支里创建，
+        # 若用户选择的是更新/管理等操作，本机可能根本没有 vasma 命令而报错退出。
+        if command -v vasma >/dev/null 2>&1; then
+            vasma
+        else
+            _yellow "未找到 vasma 命令，请按脚本提示手动执行 /etc/v2ray-agent/install.sh"
+        fi
     }
     
     install3xui() {

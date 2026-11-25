@@ -23,6 +23,9 @@ dockerfun() {
     }
     # ==========================================================
 
+    # 命名卷软链接目录，可用 VOLUME_LINK_DIR 环境变量覆盖
+    local _volume_link_dir="${VOLUME_LINK_DIR:-/home/docker/volume}"
+
     beforeMenu(){
     _blue "> ---  当前目录: [ $(pwd) ] ---- < v:$selfversion"
     echo
@@ -30,68 +33,43 @@ dockerfun() {
     echo
     }
 
-    checkcompose() {
-        # 兼容 v1 / v2 的 compose 文件名
-        if [ ! -f "docker-compose.yml" ] \
-        && [ ! -f "docker-compose.yaml" ] \
-        && [ ! -f "compose.yml" ] \
-        && [ ! -f "compose.yaml" ]; then
-            _red "当前目录没有 compose 文件 (docker-compose.yml / compose.yaml)"
-            exit
-        fi
+    # 兼容 v1 / v2 的 compose 文件名；返回 0 表示存在，1 表示不存在
+    has_compose_file() {
+        [ -f "docker-compose.yml" ] || [ -f "docker-compose.yaml" ] \
+        || [ -f "compose.yml" ] || [ -f "compose.yaml" ]
     }
 
-    catruncontainerbak() {
-        echo
-        # 获取所有正在运行的容器
-        containers=$(docker ps --format 'table {{.Names}}\t{{.ID}}\t{{.Status}}')
-
-        # 打印容器列表并添加序号
-        _green "当前正在运行的容器："
-        echo
-        _blue "序号\t容器名称  容器ID         容器状态"
-        i=1
-        while read -r line; do
-            if [[ $line != "NAMES"* ]]; then # 跳过标题行
-                echo -e "$i\t$line"
-                ((i++))
-            fi
-        done <<<"$containers"
-        echo
+    checkcompose() {
+        if ! has_compose_file; then
+            _red "当前目录没有 compose 文件 (docker-compose.yml / compose.yaml)"
+            return 1
+        fi
+        return 0
     }
 
     catruncontainer() {
         echo
-        local cmd="docker ps --format 'table {{.Names}}\t{{.ID}}\t{{.Status}}'"
-
-        # 参数判断
+        local -a containers
+        # 参数判断：直接分支调用，避免拼命令串再 eval
         if [[ "$1" == "-all" ]]; then
-            cmd="docker ps -a --format 'table {{.Names}}\t{{.ID}}\t{{.Status}}'"
-        elif [[ "$1" == "-stop" ]]; then
-            cmd="docker ps -a --filter 'status=exited' --format 'table {{.Names}}\t{{.ID}}\t{{.Status}}'"
-        fi
-
-        containers=$(eval "$cmd")
-
-        # 打印容器列表并添加序号
-        if [[ "$1" == "-stop" ]]; then
-            _green "当前已停止的容器："
-        elif [[ "$1" == "-all" ]]; then
             _green "当前所有容器："
+            mapfile -t containers < <(docker ps -a --format '{{.Names}}\t{{.ID}}\t{{.Status}}')
+        elif [[ "$1" == "-stop" ]]; then
+            _green "当前已停止的容器："
+            mapfile -t containers < <(docker ps -a --filter 'status=exited' --format '{{.Names}}\t{{.ID}}\t{{.Status}}')
         else
             _green "当前正在运行的容器："
+            mapfile -t containers < <(docker ps --format '{{.Names}}\t{{.ID}}\t{{.Status}}')
         fi
 
         echo
         _blue "序号\t容器名称  容器ID         容器状态"
 
-        i=1
-        while read -r line; do
-            if [[ $line != "NAMES"* ]]; then # 跳过标题行
-                echo -e "$i\t$line"
-                ((i++))
-            fi
-        done <<<"$containers"
+        local i=1 line
+        for line in "${containers[@]}"; do
+            echo -e "$i\t$line"
+            ((i++))
+        done
         echo
     }
 
@@ -109,22 +87,22 @@ dockerfun() {
         _blue "镜像列表："
         echo -e "\033[36m序号\t镜像名称\t\t\t镜像ID\t\t大小\t\t状态\033[0m"
 
-        images=()
-        i=1
         # 获取正在使用的镜像列表
-        used_images=($(docker ps --format '{{.Image}}' | sort | uniq))
-        docker images --format "{{.Repository}}:{{.Tag}}|{{.ID}}|{{.Size}}" | while IFS='|' read -r name id size; do
-            images+=("$name")
+        local -a used_images=()
+        mapfile -t used_images < <(docker ps --format '{{.Image}}' | sort -u)
+        local i=1 name id size used status
+        # 排除悬空镜像，保证序号与“单个导出”里的列表一致
+        while IFS='|' read -r name id size; do
             status=""
             for used in "${used_images[@]}"; do
                 if [[ "$name" == "$used" ]]; then
-                status="（已使用）"
-                break
+                    status="（已使用）"
+                    break
                 fi
             done
             printf "%s\t%-30s\t%-12s\t%-10s\t%s\n" "$i" "$name" "$id" "$size" "$status"
             ((i++))
-        done
+        done < <(docker images -f "dangling=false" --format "{{.Repository}}:{{.Tag}}|{{.ID}}|{{.Size}}")
     }
 
     dockerstatusfun() {
@@ -160,13 +138,10 @@ dockerfun() {
         fi
         echo
         _blue "compose情况"
-        if [ ! -f "docker-compose.yml" ] \
-        && [ ! -f "docker-compose.yaml" ] \
-        && [ ! -f "compose.yml" ] \
-        && [ ! -f "compose.yaml" ]; then
-            _red "当前目录没有 compose 文件"
-        else
+        if has_compose_file; then
             dc ps
+        else
+            _red "当前目录没有 compose 文件"
         fi
         echo
         _blue "容器情况"
@@ -183,10 +158,16 @@ dockerfun() {
         container_ids=($(docker ps -q))
 
         # 检查输入的序号是否有效
-        if [[ "$index" -gt 0 && "$index" -le "${#container_ids[@]}" ]]; then
+        if [[ "$index" =~ ^[0-9]+$ ]] && (( index > 0 && index <= ${#container_ids[@]} )); then
             container_id=${container_ids[$((index - 1))]}
 
-            docker exec -it "$container_id" /bin/bash
+            # 优先 bash，alpine 等镜像回退 sh
+            if docker exec "$container_id" /bin/bash -c 'true' >/dev/null 2>&1; then
+                docker exec -it "$container_id" /bin/bash
+            else
+                _yellow "该容器无 /bin/bash，使用 /bin/sh"
+                docker exec -it "$container_id" /bin/sh
+            fi
         else
             echo "无效的序号，请输入有效的序号。"
         fi
@@ -214,8 +195,8 @@ dockerfun() {
             fi
         done
 
-        read -p "请输入 y 或 n: " confirm
-        if [[ "$confirm" != "y" ]]; then
+        read -rp "请输入 y 或 n: " confirm
+        if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
             _blue "已取消操作"
             return
         fi
@@ -233,17 +214,19 @@ dockerfun() {
     }
 
     dockersysrm(){
+        _red "警告：将删除所有停止的容器、未被使用的网络/镜像/构建缓存及数据卷（不可逆）"
+        waitinput
         docker system prune -af --volumes
         _blue '清理完成'
     }
 
     composestart() {
-        checkcompose
+        checkcompose || return
         dc start
     }
 
     composestop() {
-        checkcompose
+        checkcompose || return
         dc stop
     }
 
@@ -258,7 +241,7 @@ dockerfun() {
         container_ids=($(docker ps -q))
 
         # 检查输入的序号是否有效
-        if [[ "$index" -gt 0 && "$index" -le "${#container_ids[@]}" ]]; then
+        if [[ "$index" =~ ^[0-9]+$ ]] && (( index > 0 && index <= ${#container_ids[@]} )); then
             container_id=${container_ids[$((index - 1))]}
 
             # 重启容器
@@ -292,7 +275,7 @@ dockerfun() {
         container_ids=($(docker ps -a -q -f status=exited))
 
         # 检查输入的序号是否有效
-        if [[ "$index" -gt 0 && "$index" -le "${#container_ids[@]}" ]]; then
+        if [[ "$index" =~ ^[0-9]+$ ]] && (( index > 0 && index <= ${#container_ids[@]} )); then
             container_id=${container_ids[$((index - 1))]}
 
             # 启动容器
@@ -317,7 +300,7 @@ dockerfun() {
         container_ids=($(docker ps -q))
 
         # 检查输入的序号是否有效
-        if [[ "$index" -gt 0 && "$index" -le "${#container_ids[@]}" ]]; then
+        if [[ "$index" =~ ^[0-9]+$ ]] && (( index > 0 && index <= ${#container_ids[@]} )); then
             container_id=${container_ids[$((index - 1))]}
 
             # 停止容器
@@ -342,7 +325,7 @@ dockerfun() {
         container_ids=($(docker ps -q))
 
         # 检查输入的序号是否有效
-        if [[ "$index" -gt 0 && "$index" -le "${#container_ids[@]}" ]]; then
+        if [[ "$index" =~ ^[0-9]+$ ]] && (( index > 0 && index <= ${#container_ids[@]} )); then
             container_id=${container_ids[$((index - 1))]}
 
             # 停止容器
@@ -357,37 +340,39 @@ dockerfun() {
     }
 
     catcomposelogs() {
-        checkcompose
+        checkcompose || return
         dc logs
     }
 
     composeinstall() {
-            checkcompose
-            dc up -d "$@"
+            checkcompose || return
+            dc up -d "$@" || { _red "compose 启动失败"; return 1; }
 
-            if [ $? -eq 0 ]; then
-                _blue '创建命名卷软连接 /home/docker/volume'
+            _blue "创建命名卷软连接 $_volume_link_dir（仅本项目使用的卷）"
+            mkdir -p "$_volume_link_dir"
 
-                # 获取目录
-                #current_dir=$(pwd)
-                if [ ! -d "/home/docker/volume" ]; then
-                    mkdir -p /home/docker/volume
+            # 只处理本项目容器实际挂载的命名卷
+            local -a project_vols=()
+            mapfile -t project_vols < <(
+                for cid in $(dc ps -q); do
+                    docker inspect "$cid" --format '{{range .Mounts}}{{if eq .Type "volume"}}{{.Name}}{{"\n"}}{{end}}{{end}}' 2>/dev/null
+                done | sort -u
+            )
+
+            local volume mountpoint
+            for volume in "${project_vols[@]}"; do
+                [[ -z "$volume" ]] && continue
+                mountpoint=$(docker volume inspect "$volume" --format '{{.Mountpoint}}' 2>/dev/null)
+                [[ -z "$mountpoint" ]] && continue
+                if [ ! -e "$_volume_link_dir/$volume" ] && [ ! -L "$_volume_link_dir/$volume" ]; then
+                    ln -s "$mountpoint" "$_volume_link_dir/$volume" >/dev/null 2>&1 \
+                        && _green "已创建软链: $_volume_link_dir/$volume -> $mountpoint"
                 fi
-                current_dir=/home/docker/volume
-                # 列出所有卷并遍历
-                for volume in $(docker volume ls -q); do
-                    mountpoint=$(docker volume inspect "$volume" --format '{{.Mountpoint}}')
-                    if [ ! -L "$current_dir/$volume" ]; then
-                        ln -s "$mountpoint" "$current_dir/$volume" >/dev/null 2>&1
-                        _green "Created symlink for volume '$volume' at '$current_dir/$volume' -> '$mountpoint'"
-                    fi
-                done
-            fi
-
+            done
         }
 
         composedown() {
-            checkcompose
+            checkcompose || return
             dc down
         }
 
@@ -403,7 +388,7 @@ dockerfun() {
             read -p "请输入要删除的数据卷名称: " volume
             if docker volume ls -q | grep -wq "$volume"; then
             docker volume rm "$volume" && _green "已删除数据卷 $volume"
-            rm -rf "/home/docker/volume/$volume"
+            rm -rf "$_volume_link_dir/$volume"
             else
             _red "未找到数据卷 $volume"
             fi
@@ -415,7 +400,7 @@ dockerfun() {
             _red "正在删除未使用的数据卷并移除软链接"
             for volume in $(docker volume ls -qf "dangling=true"); do
             docker volume rm "$volume"
-            rm -rf "/home/docker/volume/$volume"
+            rm -rf "$_volume_link_dir/$volume"
             done
             _green "未使用的数据卷已删除"
         }
@@ -428,7 +413,7 @@ dockerfun() {
             _red "删除并移除软链接"
             for volume in $(docker volume ls -q); do
             docker volume rm "$volume"
-            rm -rf "/home/docker/volume/$volume"
+            rm -rf "$_volume_link_dir/$volume"
             done
             _green "所有数据卷已删除"
         }
@@ -437,28 +422,27 @@ dockerfun() {
 
     catnetworkfun() {
         echo
-        # 获取所有 Docker 网络
-        # 表头（字段宽度可根据实际微调）
-        printf "%-20s %-10s %-10s %-10s %-20s %-15s %-18s\n" "网络ID" "类别" "Driver" "Scope" "网络名称" "Gateway" "IPv4Address"
+        printf "%-20s %-10s %-10s %-10s %-20s %-15s %-18s\n" \
+            "网络ID" "内部网络" "Driver" "Scope" "网络名称" "Gateway" "IPv4Address"
 
-        for network in $(docker network ls -q); do
-            info=$(docker network inspect "$network")
-            name=$(echo "$info" | jq -r '.[0].Name')
-            scope=$(echo "$info" | jq -r '.[0].Scope')
-            driver=$(echo "$info" | jq -r '.[0].Driver')
-            gateway=$(echo "$info" | jq -r '.[0].IPAM.Config[0].Gateway // ""')
-            ipv4=$(echo "$info" | jq -r '.[0].IPAM.Config[0].Subnet // ""')
-            internal=$(echo "$info" | jq -r '.[0].Internal')
-            [[ "$internal" == "true" ]] && type="internal" || type="external"
-
-            # 数据行
+        local -a net_ids=()
+        mapfile -t net_ids < <(docker network ls -q)
+        local network name scope driver gateway ipv4 internal
+        for network in "${net_ids[@]}"; do
+            # 每个网络只 inspect 一次、jq 一次，输出用制表符分隔的字段
+            IFS=$'\t' read -r name scope driver gateway ipv4 internal < <(
+                docker network inspect "$network" 2>/dev/null | jq -r \
+                    '.[0] | [.Name, .Scope, .Driver,
+                             (.IPAM.Config[0].Gateway // ""),
+                             (.IPAM.Config[0].Subnet // ""),
+                             (if .Internal then "是" else "否" end)] | @tsv'
+            )
+            [[ -z "$name" ]] && continue
             printf "%-18s %-10s %-8s %-10s %-20s %-15s %-18s\n" \
-                "$network" "$type" "$driver" "$scope" "$name" "$gateway" "$ipv4"
+                "$network" "$internal" "$driver" "$scope" "$name" "$gateway" "$ipv4"
         done
 
-        # 统计信息
-        total_networks=$(docker network ls -q | wc -l)
-        echo "总网络数: $total_networks"
+        echo "总网络数: ${#net_ids[@]}"
         echo
 
     }
@@ -473,7 +457,7 @@ dockerfun() {
         container_ids=($(docker ps -q))
 
         # 检查输入的序号是否有效
-        if [[ "$index" -gt 0 && "$index" -le "${#container_ids[@]}" ]]; then
+        if [[ "$index" =~ ^[0-9]+$ ]] && (( index > 0 && index <= ${#container_ids[@]} )); then
             container_id=${container_ids[$((index - 1))]}
 
             _blue "容器：$index"
@@ -494,7 +478,7 @@ dockerfun() {
         container_ids=($(docker ps -q))
 
         # 检查输入的序号是否有效
-        if [[ "$index" -gt 0 && "$index" -le "${#container_ids[@]}" ]]; then
+        if [[ "$index" =~ ^[0-9]+$ ]] && (( index > 0 && index <= ${#container_ids[@]} )); then
             container_id=${container_ids[$((index - 1))]}
 
             _blue "容器：$index"
@@ -507,8 +491,10 @@ dockerfun() {
 
     dockerimageimportexport() {
 
-        if [ ! -d "/home/img" ]; then
-            mkdir -p /home/img
+        # 镜像导入导出根目录，可用 IMG_EXPORT_DIR 环境变量覆盖
+        local _img_dir="${IMG_EXPORT_DIR:-/home/img}"
+        if [ ! -d "$_img_dir" ]; then
+            mkdir -p "$_img_dir"
         fi
 
         dockerimageexportone() {
@@ -517,13 +503,13 @@ dockerfun() {
             echo
             read -p "请输入要导出的镜像序号（从 1 开始）: " index
 
-            # 重新获取镜像名列表（因为 while 中的 images 变量是 subshell）
-            mapfile -t images < <(docker images --format "{{.Repository}}:{{.Tag}}")
+            # 重新获取镜像名列表（排除悬空镜像，与 catdockerimg 的序号保持一致）
+            mapfile -t images < <(docker images -f "dangling=false" --format "{{.Repository}}:{{.Tag}}")
 
 
-            if [[ "$index" -gt 0 && "$index" -le "${#images[@]}" ]]; then
+            if [[ "$index" =~ ^[0-9]+$ ]] && (( index > 0 && index <= ${#images[@]} )); then
             image_name="${images[$((index - 1))]}"
-            filename="/home/img/${image_name//[:\/]/_}.tar"
+            filename="$_img_dir/${image_name//[:\/]/_}.tar"
             _blue "导出镜像 $image_name 为 $filename"
             docker save -o "$filename" "$image_name" &
             loading $!
@@ -535,13 +521,16 @@ dockerfun() {
         }
 
         dockerimageexportuseall(){
-            _blue "正在导出正在使用的镜像到 /home/img 目录..."
-            used_images=($(docker ps --format '{{.Image}}' | sort | uniq))
+            _blue "正在导出正在使用的镜像到 $_img_dir 目录..."
+            local -a used_images=()
+            mapfile -t used_images < <(docker ps --format '{{.Image}}' | sort -u | grep -v '^<none>:<none>$')
             if [ ${#used_images[@]} -eq 0 ]; then
                 _red "当前没有正在使用的镜像"
+                return
             fi
+            local -a pids=()
             for image in "${used_images[@]}"; do
-                filename="/home/img/${image//[:\/]/_}.tar"
+                filename="$_img_dir/${image//[:\/]/_}.tar"
                 _blue "导出镜像 $image -> $filename"
                 docker save -o "$filename" "$image" &
                 pids+=($!)
@@ -549,35 +538,41 @@ dockerfun() {
             loadingprogressbar "${pids[@]}"
             wait
             _green "导出成功"
-            ls /home/img
+            ls "$_img_dir"
         }
 
 
         dockerimageexportall() {
-            _blue "开始批量导出镜像到 /home/img 目录..."
-            for image in $(docker images --format "{{.Repository}}:{{.Tag}}"); do
-                filename="/home/img/${image//[:\/]/_}.tar"
+            _blue "开始批量导出镜像到 $_img_dir 目录..."
+            local -a pids=()
+            while IFS= read -r image; do
+                [[ -z "$image" || "$image" == "<none>:<none>" ]] && continue
+                filename="$_img_dir/${image//[:\/]/_}.tar"
                 _blue "导出镜像 $image -> $filename"
                 docker save -o "$filename" "$image" &
-                pids+=($!)          # 收集子进程 PID
-            done
+                pids+=($!)
+            done < <(docker images -f "dangling=false" --format "{{.Repository}}:{{.Tag}}")
+            if [ ${#pids[@]} -eq 0 ]; then
+                _yellow "没有可导出的镜像"
+                return
+            fi
             loadingprogressbar "${pids[@]}" # 显示加载动画
             wait                 # 等待所有子进程完成
             _green "导出成功"
-            ls /home/img
+            ls "$_img_dir"
         }
 
         dockerimageimportall() {
-            if [ ! -d "/home/img" ]; then
-                _red "当前目录下没有 img 文件夹"
+            if [ ! -d "$_img_dir" ]; then
+                _red "当前目录下没有镜像目录 $_img_dir"
                 return
             fi
 
-            _blue "开始导入 /home/img 目录中的镜像文件..."
-            for file in /home/img/*.tar; do
+            _blue "开始导入 $_img_dir 目录中的镜像文件..."
+            for file in "$_img_dir"/*.tar; do
                 [ -e "$file" ] || { _red "没有找到任何 .tar 镜像文件"; return; }
-                # 获取镜像名
-                image_name=$(tar -tf "$file" | grep manifest.json | xargs -I{} tar -xOf "$file" {} | jq -r '.[0].RepoTags[0]')
+                # 获取镜像名（无标签镜像的 RepoTags 为 null，需过滤）
+                image_name=$(tar -tf "$file" | grep manifest.json | xargs -I{} tar -xOf "$file" {} | jq -r '.[0].RepoTags[0] // empty')
                 if [ -n "$image_name" ] && docker images | grep -q "$image_name"; then
                     _red "已存在同名镜像 $image_name"
                     echo "请选择操作：1 覆盖（删除旧镜像） 2 跳过 3 共存（导入后会有同名不同ID）"
