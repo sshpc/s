@@ -194,32 +194,117 @@ systemfun() {
         [[ -n "$power_mode" ]] && echo " Power Mode         : $(_blue "$power_mode")"
     }
 
-    # 同步时间
+    # 同步时间（多时区选择 + UTC 偏移标识 + NTP 自动同步）
     synchronization_time() {
-                echo "同步前的时间: $(date -R)"
-        echo "同步为上海时间? (y/n)"
-        read -r confirm
-        if [[ "$confirm" =~ ^[Yy]$ ]]; then
-            if [ -f "/etc/localtime" ]; then
-                cp -a /etc/localtime /etc/localtime.bak."$(date +%Y%m%d%H%M%S)"
+        local _ts_label_fmt
+        _ts_label_fmt() {
+            local off=${1:-$(date +%z)} sign hh mm
+            sign=${off:0:1}; hh=$((10#${off:1:2})); mm=$((10#${off:3:2}))
+            if (( mm == 0 )); then
+                printf 'UTC%c%d' "$sign" "$hh"
+            else
+                printf 'UTC%c%d:%02d' "$sign" "$hh" "$mm"
             fi
-            ln -snf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime
-            timedatectl set-timezone Asia/Shanghai
-            timedatectl set-local-rtc 0
-            check_and_install ntpd
-            
-            timedatectl set-ntp yes
-            hwclock -w
-            for service in rsyslog cron; do
-                if systemctl is-active --quiet "$service"; then
-                    systemctl restart "$service"
-                fi
-            done
-            echo "当前系统时间: $(date -R)"
-            echo "时间同步完成"
-        else
-            echo "已取消时间同步"
+        }
+        echo "同步前时间: $(date '+%Y-%m-%d %H:%M:%S') $(_ts_label_fmt) ($(date +%Z))"
+        echo
+
+        local tz_list=(
+            "UTC+0|UTC|协调世界时"
+            "UTC+0|Europe/London|伦敦"
+            "UTC+1|Europe/Berlin|中欧(柏林)"
+            "UTC+2|Europe/Helsinki|赫尔辛基"
+            "UTC+3|Europe/Moscow|莫斯科"
+            "UTC+4|Asia/Dubai|迪拜"
+            "UTC+5:30|Asia/Kolkata|印度(新德里)"
+            "UTC+7|Asia/Bangkok|曼谷"
+            "UTC+8|Asia/Shanghai|北京/上海"
+            "UTC+8|Asia/Hong_Kong|香港"
+            "UTC+8|Asia/Singapore|新加坡"
+            "UTC+9|Asia/Tokyo|东京"
+            "UTC+9|Asia/Seoul|首尔"
+            "UTC+10|Australia/Sydney|悉尼"
+            "UTC+12|Pacific/Auckland|奥克兰"
+            "UTC-5|America/New_York|纽约"
+            "UTC-6|America/Chicago|芝加哥"
+            "UTC-7|America/Denver|丹佛"
+            "UTC-8|America/Los_Angeles|洛杉矶"
+        )
+
+        _blue "选择时区 (UTC 为标准时间偏移，夏令时期间实际偏移可能变化):"
+        local i offset zone desc
+        for i in "${!tz_list[@]}"; do
+            IFS='|' read -r offset zone desc <<<"${tz_list[$i]}"
+            printf ' %2d) %-9s %-24s %s\n' "$((i + 1))" "$offset" "$zone" "$desc"
+        done
+        echo "  0) 取消"
+        echo "  m) 手动输入时区 (如 Asia/Tokyo)"
+        echo
+        read -ep "请选择 [1-${#tz_list[@]}]: " choice
+
+        if [[ -z "$choice" || "$choice" == 0 || "$choice" =~ ^[Qq]$ ]]; then
+            _yellow "已取消时间同步"
+            unset -f _ts_label_fmt
+            return
         fi
+
+        local tz
+        if [[ "$choice" =~ ^[Mm]$ ]]; then
+            read -ep "请输入时区名 (如 Asia/Tokyo): " tz
+        elif [[ "$choice" =~ ^[0-9]+$ ]] && (( 10#$choice >= 1 && 10#$choice <= ${#tz_list[@]} )); then
+            IFS='|' read -r offset zone desc <<<"${tz_list[$((10#$choice - 1))]}"
+            tz="$zone"
+        else
+            _red "无效选择"
+            unset -f _ts_label_fmt
+            return
+        fi
+
+        if [[ -z "$tz" || ! -e "/usr/share/zoneinfo/$tz" ]]; then
+            _red "时区不存在: ${tz:-空}"
+            unset -f _ts_label_fmt
+            return
+        fi
+
+        if [ -f /etc/localtime ]; then
+            cp -a /etc/localtime /etc/localtime.bak."$(date +%Y%m%d%H%M%S)"
+        fi
+        ln -snf "/usr/share/zoneinfo/$tz" /etc/localtime
+        echo "$tz" >/etc/timezone 2>/dev/null || true
+        command -v timedatectl &>/dev/null && timedatectl set-timezone "$tz" 2>/dev/null
+        command -v timedatectl &>/dev/null && timedatectl set-local-rtc 0 2>/dev/null
+
+        local ntp_ok=0
+        if command -v timedatectl &>/dev/null && timedatectl set-ntp yes 2>/dev/null; then
+            ntp_ok=1
+            _green "已启用 systemd-timesyncd 自动同步"
+        fi
+        if (( ntp_ok == 0 )); then
+            if ! command -v ntpdate &>/dev/null; then
+                check_and_install ntpsec
+                command -v ntpdate &>/dev/null || check_and_install ntp
+            fi
+            if command -v ntpdate &>/dev/null; then
+                if ntpdate -u pool.ntp.org 2>/dev/null; then
+                    ntp_ok=1
+                    _green "ntpdate 同步完成"
+                else
+                    _yellow "ntpdate 同步失败，请检查网络"
+                fi
+            fi
+        fi
+        (( ntp_ok == 0 )) && _yellow "未能启用自动同步，请手动检查 NTP 服务"
+
+        command -v hwclock &>/dev/null && hwclock -w 2>/dev/null || true
+        for service in rsyslog cron; do
+            systemctl is-active --quiet "$service" 2>/dev/null && systemctl restart "$service" 2>/dev/null
+        done
+
+        echo
+        _green "同步后时间: $(date '+%Y-%m-%d %H:%M:%S') $(_ts_label_fmt) ($(date +%Z))"
+        _green "时区已设为: $tz"
+        echo "时间同步完成"
+        unset -f _ts_label_fmt
     }
     # 仅秘钥rootssh登录
     sshpubonly() {
@@ -258,150 +343,194 @@ systemfun() {
     }
     
     
-    # 系统检查
+    # 系统检查（全面高危项，分组展示，问题优先）
     systemcheck() {
-        echo "正常登录到本机30天内的所有用户的历史记录:"
-        last | head -n 30
-        echo "系统中关键文件修改时间:"
-        ls -ltr /bin/ls /bin/login /etc/passwd /bin/ps /etc/shadow | awk '{print ">>>文件名："$9"  ""最后修改时间："$6" "$7" "$8}'
-        echo
-        _blue '开机启动的服务'
-        systemctl list-unit-files | grep enabled
-        _blue '/etc/rc.local 和开机启动脚本'
-        cat /etc/rc.local
-        echo "僵尸进程:"
-        ps -ef | grep zombie | grep -v grep
-        if [ $? == 1 ]; then
-            echo ">>>无僵尸进程"
-        else
-            echo ">>>有僵尸进程------warning"
-        fi
-        next
-        echo "耗CPU最多的进程:"
-        ps auxf | sort -nr -k 3 | head -5
-        next
-        echo "耗内存最多的进程:"
-        ps auxf | sort -nr -k 4 | head -5
-        next
-        echo "环境变量:"
-        env
-        next
-        echo "当前建立的连接:"
-        netstat -n | awk '/^tcp/ {++S[$NF]} END {for(a in S) print a, S[a]}'
+        local _issue=0 _totalrisk=0
+        _sc_hdr() {
+            (( _issue > 0 )) && printf '\n'
+            _blue "▸ $1"
+            _issue=0
+        }
+        _sc_risk() {
+            printf '  \033[1;33m[!]\033[0m %s\n' "$1"
+            _issue=$((_issue + 1)); _totalrisk=$((_totalrisk + 1))
+        }
+        _sc_ok() { printf '  \033[0;32m[OK]\033[0m %s\n' "$1"; }
+        _sc_info() { printf '       %s\n' "$1"; }
+        # 判断配置指令：取第一个有效（未注释）值
+        _sc_cfgval() { awk -v k="$1" '$1==k && $0 !~ /^[[:space:]]*#/ {print $2; exit}' "$2" 2>/dev/null; }
 
-        _blue "--IP连接数--"
-        echo '   数量 ip'
-        netstat -na | grep ESTABLISHED | awk '{print$5}' | awk -F : '{print$1}' | sort | uniq -c | sort -r
+        echo "════════════════ 系统安全全面检查 ════════════════"
 
-        _blue "--SSH失败记录--"
-        lastb | grep root | awk '{print $3}' | sort | uniq
-        echo
+        _sc_hdr "账号与口令策略"
 
-        more /etc/login.defs | grep -E "PASS_MAX_DAYS" | grep -v "#" | awk -F' ' '{if($2!=90){print ">>>密码过期天数是"$2"天,请管理员改成90天------warning"}}'
-        next
-        grep -i "^auth.*required.*pam_tally2.so.*$" /etc/pam.d/sshd >/dev/null
-        if [ $? == 0 ]; then
-            echo ">>>登入失败处理:已开启"
-        else
-            echo ">>>登入失败处理:未开启----------warning"
-        fi
-        echo
-        echo "系统中存在以下非系统默认用户:"
-        more /etc/passwd | awk -F ":" '{if($3>500){print ">>>/etc/passwd里面的"$1 "的UID为"$3",该账户非系统默认账户,请管理员确认是否为可疑账户--------warning"}}'
-        next
-        echo "系统特权用户:"
-        awk -F: '$3==0 {print $1}' /etc/passwd
-        next
-        echo "系统中空口令账户:"
-        awk -F: '($2=="!!") {print $1"该账户为空口令账户,请管理员确认是否为新增账户,如果为新建账户,请配置密码-------warning"}' /etc/shadow
-        echo
-        echo "查看syslog日志审计服务是否开启:"
-        if service rsyslog status | egrep " active \(running"; then
-            echo ">>>经分析,syslog服务已开启"
-        else
-            echo ">>>经分析,syslog服务未开启,建议通过service rsyslog start开启日志审计功能---------warning"
-        fi
-        next
-        echo "查看syslog日志是否开启外发:"
-        if more /etc/rsyslog.conf | egrep "@...\.|@..\.|@.\.|\*.\* @...\.|\*\.\* @..\.|\*\.\* @.\."; then
-            echo ">>>经分析,客户端syslog日志已开启外发--------warning"
-        else
-            echo ">>>经分析,客户端syslog日志未开启外发---------ok"
-        fi
-        next
-        echo "审计的要素和审计日志:"
-        more /etc/rsyslog.conf | grep -v "^[$|#]" | grep -v "^$"
-        next
+        local maxdays mindays minlen warnage
+        maxdays=$(_sc_cfgval PASS_MAX_DAYS /etc/login.defs)
+        mindays=$(_sc_cfgval PASS_MIN_DAYS /etc/login.defs)
+        minlen=$(_sc_cfgval PASS_MIN_LEN /etc/login.defs)
+        warnage=$(_sc_cfgval PASS_WARN_AGE /etc/login.defs)
+        [[ -n "$maxdays" ]] && (( maxdays > 90 )) && _sc_risk "密码最长有效期 ${maxdays} 天（建议 ≤90）"
+        [[ -n "$mindays" ]] && (( mindays < 1 )) && _sc_risk "密码最小修改间隔 ${mindays} 天（建议 ≥1）"
+        [[ -n "$minlen" ]] && (( minlen < 8 )) && _sc_risk "密码最小长度 ${minlen}（建议 ≥8）"
+        [[ -n "$warnage" ]] && (( warnage < 7 )) && _sc_risk "密码过期提醒 ${warnage} 天（建议 ≥7）"
 
-        echo "检查重要日志文件是否存在:"
-        for i in /var/log/secure /var/log/messages /var/log/cron /var/log/boot.log /var/log/dmesg; do
-            if [ -e "$i" ]; then
-                echo ">>>$i日志文件存在"
-            else
-                echo ">>>$i日志文件不存在------warning"
-            fi
+        local uid0 uid500 hollow locked
+        uid0=$(awk -F: '$3==0 {print $1}' /etc/passwd 2>/dev/null | paste -sd, -)
+        [[ "$uid0" != "root" && -n "$uid0" ]] && _sc_risk "存在非 root 的 UID=0 账号: $uid0"
+        uid500=$(awk -F: '$3>=500 && $1!="nobody" {print $1"("$3")"}' /etc/passwd 2>/dev/null)
+        [[ -n "$uid500" ]] && _sc_risk "普通/高 UID 账号需确认: $uid500"
+        hollow=$(awk -F: '($2=="") {print $1}' /etc/shadow 2>/dev/null | paste -sd, -)
+        [[ -n "$hollow" ]] && _sc_risk "空口令账号: $hollow"
+        locked=$(awk -F: '($2=="!!" || $2=="!") {print $1}' /etc/shadow 2>/dev/null | wc -l)
+        (( locked > 0 )) && _sc_info "锁定/未设密码账号共 $locked 个（多为系统账号，正常）"
+
+        local stale
+        stale=$(awk -F: -v now=$(( $(date +%s) / 86400 )) 'NR==FNR && $3>=500 {uid[$1]=1; next} uid[$1] && $2!="!!" && $2!="*" && $2!="" && (now-$3)>180 {print $1}' /etc/passwd /etc/shadow 2>/dev/null | paste -sd, -)
+        [[ -n "$stale" ]] && _sc_info "密码超过 180 天未修改的账号: $stale"
+
+        local tally=0
+        if grep -Eiq '^[[:space:]]*auth[[:space:]].*pam_tally2\.so' /etc/pam.d/sshd 2>/dev/null ||
+           grep -Eiq '^[[:space:]]*auth[[:space:]].*pam_faillock\.so' /etc/pam.d/system-auth /etc/pam.d/password-auth 2>/dev/null; then
+            tally=1
+        fi
+        (( tally == 0 )) && _sc_risk "未启用登录失败锁定（pam_tally2/faillock）"
+
+        _sc_hdr "SSH 服务加固"
+
+        local sshd=/etc/ssh/sshd_config
+        if [[ -r "$sshd" ]]; then
+            local permitroot pwauth emptypass x11 forward
+            permitroot=$(_sc_cfgval PermitRootLogin "$sshd")
+            pwauth=$(_sc_cfgval PasswordAuthentication "$sshd")
+            emptypass=$(_sc_cfgval PermitEmptyPasswords "$sshd")
+            x11=$(_sc_cfgval X11Forwarding "$sshd")
+            forward=$(_sc_cfgval AllowTcpForwarding "$sshd")
+            [[ "$permitroot" == "yes" ]] && _sc_risk "PermitRootLogin=yes（允许 root 直接登录）"
+            [[ "$pwauth" == "yes" ]] && _sc_risk "PasswordAuthentication=yes（建议仅密钥登录）"
+            [[ "$emptypass" == "yes" ]] && _sc_risk "PermitEmptyPasswords=yes（允许空密码）"
+            [[ "$x11" == "yes" ]] && _sc_risk "X11Forwarding=yes（存在隧道风险）"
+            [[ "$forward" == "yes" ]] && _sc_info "AllowTcpForwarding=yes（按需确认）"
+            local sshport
+            sshport=$(_sc_cfgval Port "$sshd"); sshport=${sshport:-22}
+            _sc_info "SSH 端口: $sshport / 协议: $(_sc_cfgval Protocol "$sshd")"
+        else
+            _sc_info "未找到 sshd_config，跳过 SSH 配置检查"
+        fi
+
+        local authlog=/var/log/secure
+        [[ -e "$authlog" ]] || authlog=/var/log/auth.log
+        [[ -r "$authlog" ]] || _sc_info "未找到认证日志（secure / auth.log）"
+
+        _sc_hdr "暴力破解与登录异常"
+
+        local fail
+        fail=$(lastb 2>/dev/null | awk 'NF>2 && $1!="btmp" {print $3}' | sort | uniq -c | sort -rn | head -5)
+        [[ -n "$fail" ]] && { _sc_risk "登录失败记录（来源 / 次数）:"; while IFS= read -r l; do _sc_info "$l"; done <<<"$fail"; } || _sc_ok "无 lastb 登录失败记录"
+
+        if [[ -r "$authlog" ]]; then
+            local brute
+            brute=$(awk '/Failed password|Invalid user|authentication failure/ {
+                for(i=1;i<=NF;i++) if($i=="from" || $i=="rhost") {print $(i+1); break}
+            }' "$authlog" 2>/dev/null | sort | uniq -c | sort -rn | head -5)
+            [[ -n "$brute" ]] && { _sc_risk "SSH 暴力破解迹象（来源 / 次数）:"; while IFS= read -r l; do _sc_info "$l"; done <<<"$brute"; } || _sc_ok "未发现 SSH 暴力破解记录"
+            local inv
+            inv=$(grep -c 'Invalid user' "$authlog" 2>/dev/null)
+            (( inv > 0 )) && _sc_risk "无效用户名尝试 $inv 次"
+        fi
+
+        local recentroot
+        recentroot=$(last -n 50 2>/dev/null | awk '$1=="root" && $NF ~ /^[0-9]+\.[0-9]+/ {print $NF}' | sort -u | paste -sd, -)
+        [[ -n "$recentroot" ]] && _sc_info "近期 root 远程登录来源: $recentroot"
+
+        _sc_hdr "网络与端口暴露"
+
+        local telnet=0
+        command -v systemctl &>/dev/null && systemctl is-active --quiet telnet.socket 2>/dev/null && telnet=1
+        grep -Eiq '^[[:space:]]*disable[[:space:]]*=[[:space:]]*no' /etc/xinetd.d/telnet* 2>/dev/null && telnet=1
+        (( telnet == 1 )) && _sc_risk "Telnet 服务已启用（明文传输，高危）"
+
+        local fw=0
+        command -v systemctl &>/dev/null && systemctl is-active --quiet firewalld 2>/dev/null && fw=1
+        command -v iptables &>/dev/null && iptables -S 2>/dev/null | grep -qv '^-P .* ACCEPT' && fw=1
+        command -v nft &>/dev/null && nft list ruleset 2>/dev/null | grep -q 'policy drop' && fw=1
+        (( fw == 1 )) && _sc_ok "防火墙处于启用状态" || _sc_risk "防火墙未启用或未设置默认拒绝策略"
+
+        local fwd rpfilter
+        fwd=$(sysctl -n net.ipv4.ip_forward 2>/dev/null)
+        rpfilter=$(sysctl -n net.ipv4.conf.all.rp_filter 2>/dev/null)
+        [[ "$fwd" == "1" ]] && _sc_risk "IP 转发已开启，确认是否为网关用途"
+        [[ "$rpfilter" == "0" ]] && _sc_risk "未启用反向路径过滤（rp_filter=0，易受欺骗）"
+
+        local listen
+        listen=$(ss -H -lntup 2>/dev/null | awk '{print $5, $7}' | grep -v '127.0.0.1\|::1' | head -10)
+        [[ -n "$listen" ]] && { _sc_info "对外监听端口（前10）:"; while IFS= read -r l; do _sc_info "$l"; done <<<"$listen"; }
+
+        local hostsdeny
+        hostsdeny=$(grep -E '^[[:space:]]*(sshd|ALL)[[:space:]]*:' /etc/hosts.deny 2>/dev/null | grep -v '^#' | head -3)
+        [[ -z "$hostsdeny" ]] && _sc_info "hosts.deny 未设置显式拒绝规则（依赖防火墙）"
+
+        _sc_hdr "文件系统与权限"
+
+        for f in /etc/passwd /etc/shadow /etc/sudoers /etc/ssh/sshd_config; do
+            [[ -e "$f" ]] || continue
+            local mod
+            mod=$(stat -c '%a' "$f" 2>/dev/null)
+            case "$f" in
+                /etc/passwd) [[ "$mod" != "644" && "$mod" != "655" ]] && _sc_risk "$f 权限异常($mod，建议 644)";;
+                /etc/shadow) [[ "$mod" != "000" && "$mod" != "600" && "$mod" != "640" ]] && _sc_risk "$f 权限异常($mod，建议 600/000)";;
+                /etc/sudoers) [[ "$mod" != "440" ]] && _sc_risk "$f 权限异常($mod，建议 440)";;
+            esac
         done
-        next
-        echo "系统入侵行为:"
-        more /var/log/secure | grep refused
-        if [ $? == 0 ]; then
-            echo "有入侵行为,请分析处理--------warning"
-        else
-            echo ">>>无入侵行为"
-        fi
-        next
-        echo "用户错误登入列表:"
-        lastb | head >/dev/null
-        if [ $? == 1 ]; then
-            echo ">>>无用户错误登入列表"
-        else
-            echo ">>>用户错误登入--------warning"
-            lastb | head
-        fi
-        next
-        echo "ssh暴力登入信息:"
-        more /var/log/secure | grep "Failed" >/dev/null
-        if [ $? == 1 ]; then
-            echo ">>>无ssh暴力登入信息"
-        else
-            more /var/log/secure | awk '/Failed/{print $(NF-3)}' | sort | uniq -c | awk '{print ">>>登入失败的IP和尝试次数: "$2"="$1"次---------warning";}'
-        fi
+
+        local sticky
+        sticky=$(find /tmp /var/tmp -maxdepth 0 -type d ! -perm -1000 2>/dev/null | paste -sd, -)
+        [[ -n "$sticky" ]] && _sc_risk "临时目录缺少 sticky 位: $sticky"
+
+        local sroot
+        sroot=$(find / -xdev -perm -4000 -user root -type f 2>/dev/null | head -5)
+        [[ -n "$sroot" ]] && _sc_info "SUID root 文件（前5，确认必要性）:" && while IFS= read -r l; do _sc_info "$l"; done <<<"$sroot"
+
+        _sc_hdr "进程与计划任务"
+
+        local zombies
+        zombies=$(ps -eo stat,comm 2>/dev/null | awk '$1 ~ /^Z/ {print $2}' | sort | uniq -c | sort -rn | head -5)
+        [[ -n "$zombies" ]] && { _sc_risk "僵尸进程:"; while IFS= read -r l; do _sc_info "$l"; done <<<"$zombies"; } || _sc_ok "无僵尸进程"
+
+        local usercron
+        usercron=$(for u in $(awk -F: '$3>=500 {print $1}' /etc/passwd 2>/dev/null); do crontab -l -u "$u" 2>/dev/null | grep -qv '^#' && echo "$u"; done | paste -sd, -)
+        [[ -n "$usercron" ]] && _sc_info "存在用户级 crontab 的账号: $usercron"
+
+        local weirdcron
+        weirdcron=$(grep -RE 'curl|wget|/dev/tcp|base64 -d' /etc/cron* /var/spool/cron 2>/dev/null | grep -v '^#' | head -5)
+        [[ -n "$weirdcron" ]] && { _sc_risk "计划任务含可疑下载/反弹命令:"; while IFS= read -r l; do _sc_info "$l"; done <<<"$weirdcron"; }
+
+        _sc_hdr "日志与审计"
+
+        local logfiles="/var/log/secure /var/log/auth.log /var/log/messages /var/log/cron /var/log/boot.log /var/log/dmesg"
+        local missing="" found=0
+        for f in $logfiles; do [[ -e "$f" ]] && found=$((found+1)) || missing="$missing $f"; done
+        (( found == 0 )) && _sc_risk "常见日志文件均缺失，审计可能未开启"
+        [[ -n "$missing" ]] && _sc_info "不存在的日志(按发行版可能正常):$missing"
+
+        command -v systemctl &>/dev/null && systemctl is-active --quiet rsyslog 2>/dev/null && _sc_ok "rsyslog 日志服务运行中" || _sc_info "rsyslog 未运行（可能使用 systemd-journald）"
+        command -v auditctl &>/dev/null && { auditctl -s 2>/dev/null | grep -q 'enabled 1' && _sc_ok "auditd 审计已启用" || _sc_risk "auditd 已安装但未启用"; } || _sc_info "未安装 auditd（可选加固）"
+
+        _sc_hdr "内核与系统加固"
+
+        local aslr core
+        aslr=$(sysctl -n kernel.randomize_va_space 2>/dev/null)
+        [[ -n "$aslr" && "$aslr" != "2" ]] && _sc_risk "ASLR 未完全开启（randomize_va_space=$aslr，建议 2）"
+        core=$(ulimit -c 2>/dev/null)
+        [[ "$core" != "0" ]] && _sc_info "core dump 未禁用（ulimit -c=$core）"
+
+        local keyfiles="/bin/ls /bin/login /etc/passwd /bin/ps /etc/shadow"
+        for f in $keyfiles; do
+            [[ -e "$f" ]] && _sc_info "$(stat -c '%y  %n' "$f" 2>/dev/null | cut -d. -f1)"
+        done
+
         echo
-        echo "查看是否开启了ssh服务:"
-        if service sshd status | grep -E "listening on|active \(running\)"; then
-            echo ">>>SSH服务已开启"
-        else
-            echo ">>>SSH服务未开启--------warning"
-        fi
-        next
-        echo "查看是否开启了Telnet-Server服务:"
-        if more /etc/xinetd.d/telnetd 2>&1 | grep -E "disable=no"; then
-            echo ">>>Telnet-Server服务已开启"
-        else
-            echo ">>>Telnet-Server服务未开启--------ok"
-        fi
-        next
-        ps axu | grep iptables | grep -v grep || ps axu | grep firewalld | grep -v grep
-        if [ $? == 0 ]; then
-            echo ">>>防火墙已启用--------ok"
-            iptables -nvL --line-numbers
-        else
-            echo ">>>防火墙未启用--------warning"
-        fi
-        next
-        echo "查看系统SSH远程访问设置策略(host.deny拒绝列表):"
-        if more /etc/hosts.deny | grep -E "sshd"; then
-            echo ">>>远程访问策略已设置--------warning"
-        else
-            echo ">>>远程访问策略未设置--------ok"
-        fi
-        next
-        echo "查看系统SSH远程访问设置策略(hosts.allow允许列表):"
-        if more /etc/hosts.allow | grep -E "sshd"; then
-            echo ">>>远程访问策略已设置--------warning"
-        else
-            echo ">>>远程访问策略未设置--------ok"
-        fi
+        echo "════════════════ 检查结束 · 共发现 ${_totalrisk} 处风险 ════════════════"
+        unset -f _sc_hdr _sc_risk _sc_ok _sc_info _sc_cfgval
     }
 
     

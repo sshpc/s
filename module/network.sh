@@ -391,78 +391,113 @@ EOF
     
     # 外网测速
     publicnettest() {
+        local speeddir="${HOME}/.speedtest-cli-ookla"
 
         netfast() {
-            check_and_install speedtest-cli
-            echo "开始测速"
-            speedtest-cli
-            echo "测速完成"
+            if ! command -v speedtest-cli &>/dev/null; then
+                check_and_install speedtest-cli
+                command -v speedtest-cli &>/dev/null || { _red "speedtest-cli 安装失败，请手动安装"; return 1; }
+            fi
+            _blue "开始测速..."
+            speedtest-cli || { _red "测速失败"; return 1; }
+            _green "测速完成"
         }
 
         # SpeedCLI 测速
         netfast2() {
-            echo "开始测速"
-            curl -fsSL git.io/speedtest-cli.sh | sudo bash
-            speedtest
-            echo "测速完成"
+            command -v curl &>/dev/null || { _red "未安装 curl"; return 1; }
+            local script tmp
+            script=$(curl -fsSL --max-time 15 https://git.io/speedtest-cli.sh) || { _red "测速脚本下载失败（git.io 短链可能已失效）"; return 1; }
+            [[ -n "$script" ]] || { _red "测速脚本为空"; return 1; }
+            tmp=$(mktemp) || { _red "无法创建临时文件"; return 1; }
+            printf '%s\n' "$script" > "$tmp"
+            _blue "开始安装/测速..."
+            if command -v sudo &>/dev/null; then
+                sudo bash "$tmp"
+            else
+                bash "$tmp"
+            fi
+            local rc=$?
+            rm -f "$tmp"
+            (( rc == 0 )) || { _red "安装/测速失败"; return 1; }
+            command -v speedtest &>/dev/null || { _red "speedtest 命令不可用"; return 1; }
+            speedtest || { _red "测速失败"; return 1; }
+            _green "测速完成"
         }
         # 三网测速
         sanwang() {
-            bash <(curl -Lso- https://down.wangchao.info/sh/superspeed.sh)
+            command -v curl &>/dev/null || { _red "未安装 curl"; return 1; }
+            local script
+            script=$(curl -fsSL --max-time 15 https://down.wangchao.info/sh/superspeed.sh) || { _red "三网测速脚本下载失败"; return 1; }
+            [[ -n "$script" ]] || { _red "测速脚本为空"; return 1; }
+            bash -c "$script"
         }
         # 多地区测速
         netfast3() {
+            local stbin="${speeddir}/speedtest"
+            local logfile="${speeddir}/speedtest.log"
 
-            if [ ! -e "./speedtest-cli/speedtest" ]; then
-                sys_bit=""
-                local sysarch
+            if [ ! -x "$stbin" ]; then
+                local sysarch sys_bit url1 url2
                 sysarch="$(uname -m)"
-                if [ "${sysarch}" = "unknown" ] || [ "${sysarch}" = "" ]; then
-                    sysarch="$(arch)"
+                [[ "$sysarch" = "unknown" || -z "$sysarch" ]] && sysarch="$(arch)"
+                case "$sysarch" in
+                    x86_64|amd64) sys_bit="x86_64" ;;
+                    i386|i686) sys_bit="i386" ;;
+                    armv8|armv8l|aarch64|arm64) sys_bit="aarch64" ;;
+                    armv7|armv7l) sys_bit="armhf" ;;
+                    armv6) sys_bit="armel" ;;
+                    *) sys_bit="" ;;
+                esac
+                [[ -z "$sys_bit" ]] && { _red "不支持的系统架构: ${sysarch}"; return 1; }
+                if ! command -v wget &>/dev/null && ! command -v curl &>/dev/null; then
+                    _red "需要 wget 或 curl 下载测速程序"
+                    return 1
                 fi
-                if [ "${sysarch}" = "x86_64" ]; then
-                    sys_bit="x86_64"
-                fi
-                if [ "${sysarch}" = "i386" ] || [ "${sysarch}" = "i686" ]; then
-                    sys_bit="i386"
-                fi
-                if [ "${sysarch}" = "armv8" ] || [ "${sysarch}" = "armv8l" ] || [ "${sysarch}" = "aarch64" ] || [ "${sysarch}" = "arm64" ]; then
-                    sys_bit="aarch64"
-                fi
-                if [ "${sysarch}" = "armv7" ] || [ "${sysarch}" = "armv7l" ]; then
-                    sys_bit="armhf"
-                fi
-                if [ "${sysarch}" = "armv6" ]; then
-                    sys_bit="armel"
-                fi
-                [ -z "${sys_bit}" ] && _red "Error: Unsupported system architecture (${sysarch}).\n" && exit 1
                 url1="https://install.speedtest.net/app/cli/ookla-speedtest-1.2.0-linux-${sys_bit}.tgz"
                 url2="https://dl.lamp.sh/files/ookla-speedtest-1.2.0-linux-${sys_bit}.tgz"
-                if ! wget --no-check-certificate -q -T10 -O speedtest.tgz ${url1}; then
-                    if ! wget --no-check-certificate -q -T10 -O speedtest.tgz ${url2}; then
-                        _red "Error: Failed to download speedtest-cli.\n" && exit 1
-                    fi
+                local tgz="${speeddir}/speedtest.tgz"
+                mkdir -p "$speeddir" || { _red "无法创建目录 $speeddir"; return 1; }
+                local ok=0
+                if command -v wget &>/dev/null; then
+                    wget --no-check-certificate -q -T15 -O "$tgz" "$url1" && ok=1
+                    (( ok == 0 )) && wget --no-check-certificate -q -T15 -O "$tgz" "$url2" && ok=1
+                elif command -v curl &>/dev/null; then
+                    curl -kfsSL --max-time 15 -o "$tgz" "$url1" && ok=1
+                    (( ok == 0 )) && curl -kfsSL --max-time 15 -o "$tgz" "$url2" && ok=1
                 fi
-                mkdir -p speedtest-cli && tar zxf speedtest.tgz -C ./speedtest-cli && chmod +x ./speedtest-cli/speedtest
-                rm -f speedtest.tgz
+                (( ok == 0 )) && { rm -f "$tgz"; _red "测速程序下载失败"; return 1; }
+                if ! tar zxf "$tgz" -C "$speeddir" 2>/dev/null || [ ! -f "$stbin" ]; then
+                    rm -f "$tgz"
+                    _red "测速程序解压失败"
+                    return 1
+                fi
+                chmod +x "$stbin"
+                rm -f "$tgz"
             fi
-            printf "%-18s%-18s%-20s%-12s\n" " Node Name" "Upload Speed" "Download Speed" "Latency"
+
+            printf "%-18s%-18s%-20s%-12s\n" " Node Name" "Download Speed" "Upload Speed" "Latency"
 
             speed_test() {
-                local nodeName="$2"
-                if [ -z "$1" ]; then
-                    ./speedtest-cli/speedtest --progress=no --accept-license --accept-gdpr >./speedtest-cli/speedtest.log 2>&1
+                local nodeName="$2" sid="$1"
+                if [ -z "$sid" ]; then
+                    "$stbin" --progress=no --accept-license --accept-gdpr >"$logfile" 2>&1
                 else
-                    ./speedtest-cli/speedtest --progress=no --server-id="$1" --accept-license --accept-gdpr >./speedtest-cli/speedtest.log 2>&1
+                    "$stbin" --progress=no --server-id="$sid" --accept-license --accept-gdpr >"$logfile" 2>&1
                 fi
-                if [ $? -eq 0 ]; then
-                    local dl_speed up_speed latency
-                    dl_speed=$(awk '/Download/{print $3" "$4}' ./speedtest-cli/speedtest.log)
-                    up_speed=$(awk '/Upload/{print $3" "$4}' ./speedtest-cli/speedtest.log)
-                    latency=$(awk '/Latency/{print $3" "$4}' ./speedtest-cli/speedtest.log)
-                    if [[ -n "${dl_speed}" && -n "${up_speed}" && -n "${latency}" ]]; then
-                        printf "\033[0;33m%-18s\033[0;32m%-18s\033[0;31m%-20s\033[0;36m%-12s\033[0m\n" " ${nodeName}" "${up_speed}" "${dl_speed}" "${latency}"
-                    fi
+                if [ $? -ne 0 ]; then
+                    printf "\033[0;33m%-18s\033[0;31m%s\033[0m\n" " ${nodeName}" "测速失败（节点不可用或网络超时）"
+                    return
+                fi
+                local dl_speed up_speed latency
+                dl_speed=$(awk '/Download:/{print $2" "$3}' "$logfile")
+                up_speed=$(awk '/Upload:/{print $2" "$3}' "$logfile")
+                latency=$(awk '/Latency:/{print $2" "$3}' "$logfile")
+                if [[ -n "${dl_speed}" && -n "${up_speed}" && -n "${latency}" ]]; then
+                    printf "\033[0;33m%-18s\033[0;32m%-18s\033[0;31m%-20s\033[0;36m%-12s\033[0m\n" \
+                        " ${nodeName}" "${dl_speed}" "${up_speed}" "${latency}"
+                else
+                    printf "\033[0;33m%-18s\033[0;31m%s\033[0m\n" " ${nodeName}" "结果解析失败"
                 fi
             }
             speed_test '' 'Speedtest.net'
@@ -478,16 +513,13 @@ EOF
             speed_test '23647' 'Mumbai, IN'
             speed_test '13623' 'Singapore, SG'
             speed_test '21569' 'Tokyo, JP'
-
-            rm -rf speedtest-cli
-
+            unset -f speed_test
         }
 
         menuname='首页/网络/外网测速'
         options=("测速1" netfast "测速2-SpeedCLI" netfast2 "多地区测速" netfast3 "三网测速" sanwang)
 
         menu "${options[@]}"
-
     }
     # 局域网ip
     lanfun() {
@@ -896,61 +928,78 @@ EOF
     }
 
     iptablesfun() {
+        [[ $EUID -ne 0 ]] && { _red "错误：iptables 管理需要 root 权限，请使用 sudo 执行"; return 1; }
+        command -v iptables &>/dev/null || { _red "错误：系统未安装 iptables"; return 1; }
+
+        _ipt_ok() { _green "$1"; }
+        _ipt_fail() { _red "错误：$1 执行失败，请检查权限或模块支持"; return 1; }
+        _ipt_port() { [[ "$1" =~ ^[0-9]+$ ]] && (( 10#$1 >= 1 && 10#$1 <= 65535 )); }
+
         iptshow() {
             echo
             _blue "===== iptables INPUT 规则 ====="
             echo
-            iptables -L INPUT -n -v --line-numbers 2>/dev/null
+            iptables -L INPUT -n -v --line-numbers 2>/dev/null || _ipt_fail "查看 INPUT"
             echo
             _blue "===== iptables FORWARD 规则 ====="
             echo
-            iptables -L FORWARD -n -v --line-numbers 2>/dev/null
+            iptables -L FORWARD -n -v --line-numbers 2>/dev/null || _ipt_fail "查看 FORWARD"
             echo
             _blue "===== iptables NAT 规则 ====="
             echo
-            iptables -t nat -L -n -v --line-numbers 2>/dev/null
+            iptables -t nat -L -n -v --line-numbers 2>/dev/null || _ipt_fail "查看 NAT"
         }
 
         iptallowport() {
             read -ep "请输入放行端口: " port
             [[ -z "$port" ]] && { _yellow "已取消"; return; }
+            _ipt_port "$port" || { _red "无效端口"; return; }
             echo "协议: 1)tcp  2)udp  3)tcp+udp"
             read -ep "请选择 (默认1): " proto
             case "$proto" in
-                2) iptables -I INPUT -p udp --dport "$port" -j ACCEPT; _green "已放行 UDP $port" ;;
-                3) iptables -I INPUT -p tcp --dport "$port" -j ACCEPT
-                   iptables -I INPUT -p udp --dport "$port" -j ACCEPT
-                   _green "已放行 TCP+UDP $port" ;;
-                *) iptables -I INPUT -p tcp --dport "$port" -j ACCEPT; _green "已放行 TCP $port" ;;
+                2) iptables -I INPUT -p udp --dport "$port" -j ACCEPT || { _ipt_fail "放行 UDP $port"; return 1; }
+                   _ipt_ok "已放行 UDP $port" ;;
+                3) if iptables -I INPUT -p tcp --dport "$port" -j ACCEPT &&
+                      iptables -I INPUT -p udp --dport "$port" -j ACCEPT; then
+                       _ipt_ok "已放行 TCP+UDP $port"
+                   else
+                       _ipt_fail "放行 TCP+UDP $port"
+                   fi ;;
+                *) iptables -I INPUT -p tcp --dport "$port" -j ACCEPT || { _ipt_fail "放行 TCP $port"; return 1; }
+                   _ipt_ok "已放行 TCP $port" ;;
             esac
         }
 
         iptblockport() {
             read -ep "请输入拦截端口: " port
             [[ -z "$port" ]] && { _yellow "已取消"; return; }
-            iptables -I INPUT -p tcp --dport "$port" -j DROP
-            iptables -I INPUT -p udp --dport "$port" -j DROP
-            _green "已拦截 TCP+UDP $port"
+            _ipt_port "$port" || { _red "无效端口"; return; }
+            if iptables -I INPUT -p tcp --dport "$port" -j DROP &&
+               iptables -I INPUT -p udp --dport "$port" -j DROP; then
+                _ipt_ok "已拦截 TCP+UDP $port"
+            else
+                _ipt_fail "拦截 $port"
+            fi
         }
 
         iptblockip() {
             read -ep "请输入要封禁的IP: " ip
             [[ -z "$ip" ]] && { _yellow "已取消"; return; }
-            iptables -I INPUT -s "$ip" -j DROP
-            _green "已封禁 $ip"
+            iptables -I INPUT -s "$ip" -j DROP || { _ipt_fail "封禁 $ip"; return 1; }
+            _ipt_ok "已封禁 $ip"
         }
 
         iptallowip() {
             read -ep "请输入要放行的IP: " ip
             [[ -z "$ip" ]] && { _yellow "已取消"; return; }
-            iptables -I INPUT -s "$ip" -j ACCEPT
-            _green "已放行 $ip"
+            iptables -I INPUT -s "$ip" -j ACCEPT || { _ipt_fail "放行 $ip"; return 1; }
+            _ipt_ok "已放行 $ip"
         }
 
         iptdelrule() {
             echo
             _blue "当前 INPUT 规则:"
-            iptables -L INPUT -n --line-numbers
+            iptables -L INPUT -n --line-numbers || { _ipt_fail "查看规则"; return 1; }
             echo
             read -ep "请输入要删除的规则序号: " rulenum
             [[ -z "$rulenum" ]] && { _yellow "已取消"; return; }
@@ -958,97 +1007,133 @@ EOF
                 _red "无效序号"
                 return
             fi
-            iptables -D INPUT "$rulenum"
-            _green "已删除规则 #$rulenum"
+            iptables -D INPUT "$rulenum" || { _ipt_fail "删除规则 #$rulenum"; return 1; }
+            _ipt_ok "已删除规则 #$rulenum"
             echo
             _blue "当前 INPUT 规则:"
             iptables -L INPUT -n --line-numbers
         }
 
         iptflush() {
-            _red "警告: 将清空所有 iptables 规则！"
+            _red "警告: 将清空所有规则，并把默认策略重置为 ACCEPT（操作本身不会断连）"
             read -ep "确认清空? (y/n, 默认n): " confirm
             [[ "$confirm" != "y" ]] && { _yellow "已取消"; return; }
-            iptables -F
-            iptables -t nat -F
-            iptables -X
-            _green "已清空所有规则"
-        }
-
-        iptsaverules() {
-            local savefile="/root/iptables-rules.bak.$(date +%Y%m%d%H%M%S)"
-            iptables-save > "$savefile"
-            _green "规则已保存到 $savefile"
-        }
-
-        iptrestorerules() {
-            echo
-            _blue "已保存的规则文件:"
-            local files=()
-            while IFS= read -r f; do
-                files+=("$f")
-            done < <(ls -t /root/iptables-rules.bak.* 2>/dev/null)
-
-            if [[ ${#files[@]} -eq 0 ]]; then
-                _yellow "没有找到备份文件"
-                return
+            # 先把默认策略设为 ACCEPT，防止原策略为 DROP 时 -F 清掉放行规则后把自己锁在外面
+            iptables -P INPUT ACCEPT || { _ipt_fail "重置 INPUT 策略"; return 1; }
+            iptables -P FORWARD ACCEPT || { _ipt_fail "重置 FORWARD 策略"; return 1; }
+            iptables -P OUTPUT ACCEPT || { _ipt_fail "重置 OUTPUT 策略"; return 1; }
+            if iptables -F && iptables -t nat -F && iptables -t mangle -F && iptables -X && iptables -t nat -X; then
+                _ipt_ok "已清空所有规则，默认策略已重置为 ACCEPT"
+            else
+                _ipt_fail "清空规则"
             fi
+        }
 
+        iptexportrules() {
+            local savefile
+            read -ep "导出文件路径 (默认 /root/iptables-rules.bak.时间戳): " savefile
+            savefile=${savefile:-/root/iptables-rules.bak.$(date +%Y%m%d%H%M%S)}
+            command -v iptables-save &>/dev/null || { _red "错误：未找到 iptables-save"; return 1; }
+            if iptables-save > "$savefile" 2>/dev/null && [[ -s "$savefile" ]]; then
+                _ipt_ok "规则已导出到 $savefile"
+            else
+                rm -f "$savefile"
+                _ipt_fail "导出规则"
+            fi
+        }
+
+        iptimportrules() {
+            command -v iptables-restore &>/dev/null || { _red "错误：未找到 iptables-restore"; return 1; }
+            echo
+            _blue "可导入的规则文件:"
+            local files=()
+            local f
+            for f in /root/iptables-rules.bak.*; do
+                [[ -f "$f" ]] && files+=("$f")
+            done
+            (( ${#files[@]} == 0 )) && { _yellow "没有找到可导入的规则文件"; return; }
+
+            local i
             for i in "${!files[@]}"; do
                 printf "  %d) %s\n" "$((i+1))" "${files[$i]}"
             done
-            echo
-            read -ep "请选择要恢复的文件序号: " choice
-            if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= ${#files[@]} )); then
-                _red "将替换当前所有规则！"
-                read -ep "确认? (y/n, 默认n): " confirm
-                [[ "$confirm" != "y" ]] && { _yellow "已取消"; return; }
-                iptables-restore < "${files[$((choice-1))]}"
-                _green "规则已恢复"
+            read -ep "或直接输入完整路径 (回车则从上面选择): " custom
+            local target=""
+            if [[ -n "$custom" ]]; then
+                [[ -f "$custom" && -s "$custom" ]] || { _red "文件不存在或为空: $custom"; return; }
+                target="$custom"
             else
-                _red "无效序号"
+                read -ep "请选择要导入的文件序号: " choice
+                if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= ${#files[@]} )); then
+                    target="${files[$((choice-1))]}"
+                else
+                    _red "无效序号"
+                    return
+                fi
+            fi
+
+            _red "警告：导入将替换当前所有规则！"
+            read -ep "确认导入? (y/n, 默认n): " confirm
+            [[ "$confirm" != "y" ]] && { _yellow "已取消"; return; }
+            if iptables-restore < "$target" 2>/dev/null; then
+                _ipt_ok "规则已从 $target 导入"
+            else
+                _ipt_fail "导入规则（文件格式可能不兼容）"
             fi
         }
 
         iptdefaultdeny() {
             _red "将设置默认策略: INPUT DROP, FORWARD DROP, OUTPUT ACCEPT"
-            _red "确保SSH端口已放行，否则会断开连接！"
             read -ep "确认? (y/n, 默认n): " confirm
             [[ "$confirm" != "y" ]] && { _yellow "已取消"; return; }
-            iptables -P INPUT DROP
-            iptables -P FORWARD DROP
-            iptables -P OUTPUT ACCEPT
-            iptables -A INPUT -i lo -j ACCEPT
-            iptables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
-            _green "默认策略已设置 (已自动放行回环和已建立连接)"
+
+            local sshport
+            sshport=$(awk '$1=="Port" && $2 ~ /^[0-9]+$/ {print $2; exit}' /etc/ssh/sshd_config 2>/dev/null)
+            sshport=${sshport:-22}
+            _blue "自动放行 SSH 端口 $sshport、回环和已建立连接，防止断连"
+            iptables -I INPUT -i lo -j ACCEPT || { _ipt_fail "放行回环"; return 1; }
+            iptables -I INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT || { _ipt_fail "放行已建立连接"; return 1; }
+            iptables -I INPUT -p tcp --dport "$sshport" -j ACCEPT || { _ipt_fail "放行 SSH 端口"; return 1; }
+            iptables -P INPUT DROP || { _ipt_fail "设置 INPUT 策略"; return 1; }
+            iptables -P FORWARD DROP || { _ipt_fail "设置 FORWARD 策略"; return 1; }
+            iptables -P OUTPUT ACCEPT || { _ipt_fail "设置 OUTPUT 策略"; return 1; }
+            _ipt_ok "默认策略已设置 (SSH:$sshport / lo / 已建立连接 已放行)"
         }
 
         iptsshguard() {
             echo
             read -ep "SSH端口 (默认22): " sshport
             sshport=${sshport:-22}
+            _ipt_port "$sshport" || { _red "无效端口"; return; }
             read -ep "最大尝试次数 (默认5): " maxretry
             maxretry=${maxretry:-5}
             read -ep "封禁时间秒数 (默认3600): " bantime
             bantime=${bantime:-3600}
+            [[ "$maxretry" =~ ^[0-9]+$ && "$bantime" =~ ^[0-9]+$ ]] || { _red "尝试次数和封禁时间必须为正整数"; return; }
 
-            iptables -I INPUT -p tcp --dport "$sshport" -m state --state NEW -m recent --set --name SSH
-            iptables -I INPUT -p tcp --dport "$sshport" -m state --state NEW -m recent --update --seconds "$bantime" --hitcount "$maxretry" --name SSH -j DROP
-            _green "SSH防暴力破解已启用 (端口:$sshport ${maxretry}次/${bantime}秒)"
+            if iptables -I INPUT -p tcp --dport "$sshport" -m conntrack --ctstate NEW -m recent --set --name SSH &&
+               iptables -I INPUT -p tcp --dport "$sshport" -m conntrack --ctstate NEW -m recent --update --seconds "$bantime" --hitcount "$maxretry" --name SSH -j DROP; then
+                _ipt_ok "SSH防暴力破解已启用 (端口:$sshport ${maxretry}次/${bantime}秒)"
+            else
+                _ipt_fail "设置 SSH 防暴力破解"
+            fi
         }
 
         iptconnectionlimit() {
             read -ep "请输入限制的端口: " port
             [[ -z "$port" ]] && { _yellow "已取消"; return; }
+            _ipt_port "$port" || { _red "无效端口"; return; }
             read -ep "最大并发连接数 (默认100): " maxconn
             maxconn=${maxconn:-100}
-            iptables -A INPUT -p tcp --dport "$port" -m connlimit --connlimit-above "$maxconn" -j REJECT
-            _green "端口 $port 并发连接限制为 $maxconn"
+            [[ "$maxconn" =~ ^[0-9]+$ ]] && (( maxconn > 0 )) || { _red "无效并发数"; return; }
+            iptables -I INPUT -p tcp --dport "$port" -m connlimit --connlimit-above "$maxconn" -j REJECT || { _ipt_fail "设置并发限制"; return 1; }
+            _ipt_ok "端口 $port 并发连接限制为 $maxconn"
         }
 
         menuname='首页/网络/iptables管理'
-        options=("查看全部规则" iptshow "放行端口" iptallowport "拦截端口" iptblockport "放行IP" iptallowip "封禁IP" iptblockip "删除规则(序号)" iptdelrule "SSH防暴力破解" iptsshguard "端口并发限制" iptconnectionlimit "默认策略(白名单模式)" iptdefaultdeny "保存规则" iptsaverules "恢复规则" iptrestorerules "清空所有规则" iptflush)
+        options=("查看全部规则" iptshow "放行端口" iptallowport "拦截端口" iptblockport "放行IP" iptallowip "封禁IP" iptblockip "删除规则(序号)" iptdelrule "SSH防暴力破解" iptsshguard "端口并发限制" iptconnectionlimit "默认策略(白名单模式)" iptdefaultdeny "导出规则" iptexportrules "导入规则" iptimportrules "清空所有规则" iptflush)
         menu "${options[@]}"
+        unset -f _ipt_ok _ipt_fail _ipt_port
     }
 
     # DNS 查询枚举 (基于 dnsrecon)
