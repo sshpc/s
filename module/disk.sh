@@ -24,6 +24,148 @@ diskfun() {
         } | sort -u | grep '^/dev/' || true
     }
 
+    # ===== 分区操作通用辅助（参考 SDM 重构，但不引入 tput/raw mode，沿用数字菜单）=====
+    # 命令 → 依赖包名映射，check_and_install 只接受包名，不能直接传命令名。
+    cmd_pkg() {
+        case "$1" in
+            mkfs.xfs|xfs_growfs|xfs_repair|xfs_info) echo xfsprogs;;
+            mkfs.ext4|mkfs.ext3|mkfs.ext2|resize2fs|e2fsck|tune2fs|dumpe2fs) echo e2fsprogs;;
+            sgdisk) echo gdisk;;
+            parted) echo parted;;
+            growpart|partprobe) echo cloud-guest-utils;;
+            lsblk|findmnt|blkid|mount|umount|partx|sfdisk) echo util-linux;;
+            *) echo "$1";;
+        esac
+    }
+
+    # 检查命令是否存在；缺失时自动安装对应依赖包（不中断脚本）。
+    need_cmd() {
+        local c="$1" pkg
+        if command -v "$c" >/dev/null 2>&1; then
+            return 0
+        fi
+        pkg=$(cmd_pkg "$c")
+        _yellow "缺少工具：$c，正在自动安装依赖包：$pkg ..."
+        if [ "$c" = "growpart" ]; then
+            ensure_growpart
+        else
+            check_and_install "$pkg"
+        fi
+        if command -v "$c" >/dev/null 2>&1; then
+            _green "工具 $c 已就绪。"
+            return 0
+        fi
+        _red "安装后仍找不到 $c，请手动检查依赖安装是否成功。"
+        return 1
+    }
+
+    # 二次确认：必须输入 yes
+    confirm_yes() {
+        local prompt="${1:-确认继续？请输入 yes: }" ans
+        read -r -p "$prompt" ans
+        [[ "$ans" == "yes" ]]
+    }
+
+    # 取根磁盘（完整路径 /dev/sdX），沿持有者链解析，兼容 NVMe/LVM/RAID
+    get_root_disk() {
+        local src dev pk _
+        src=$(findmnt -n -o SOURCE / 2>/dev/null)
+        [ -z "$src" ] && return 1
+        dev=$(readlink -f "$src" 2>/dev/null || echo "$src")
+        for _ in 1 2 3; do
+            pk=$(lsblk -no PKNAME "$dev" 2>/dev/null | head -1)
+            [ -z "$pk" ] && break
+            dev="/dev/$pk"
+        done
+        lsblk -no NAME -dp "$dev" 2>/dev/null | head -1
+    }
+
+    # 磁盘是否包含 LVM 结构
+    disk_has_lvm() {
+        lsblk -n -o TYPE,FSTYPE "$1" 2>/dev/null | grep -qi 'lvm' && return 0
+        return 1
+    }
+
+    # 分区号：直接从设备名尾部数字提取，不依赖 PKNAME（部分系统 lsblk 不输出 PKNAME
+    # 会导致删分区时报 “Partition doesn't exist”）。兼容 sda2 / nvme0n1p2 / mmcblk0p1。
+    part_number() {
+        local p
+        p=$(basename "$1")
+        [[ "$p" =~ ([0-9]+)$ ]] && printf '%s' "${BASH_REMATCH[1]}"
+    }
+
+    # 分区文件系统 / 挂载点
+    part_fstype() { blkid -s TYPE -o value "$1" 2>/dev/null; }
+    part_mountpoint() { findmnt -n -o TARGET "$1" 2>/dev/null | head -1; }
+
+    # 校验挂载路径：必须绝对路径，禁 ..，禁系统目录
+    validate_mount_path() {
+        local p="$1"
+        [[ -z "$p" || "$p" != /* ]] && { _red "挂载点必须是绝对路径。"; return 1; }
+        [[ "$p" == *..* ]] && { _red "挂载点不能包含 .."; return 1; }
+        case "$p" in
+            /|/bin|/sbin|/usr|/lib|/lib64|/etc|/proc|/sys|/dev|/boot|/boot/efi)
+                _red "不能挂载到系统目录：$p"; return 1;;
+        esac
+        return 0
+    }
+
+    # 等待分区设备节点出现（udevadm settle + 最多 5 次轮询）
+    wait_for_part() {
+        local dev="$1" i
+        for i in 1 2 3 4 5; do
+            [ -b "$dev" ] && return 0
+            udevadm settle >/dev/null 2>&1 || true
+            sleep 1
+        done
+        [ -b "$dev" ]
+    }
+
+    # 大小字符串转字节：支持 10G/500M/50%/纯字节
+    parse_size_bytes() {
+        local s cur n u
+        s=$(printf '%s' "$1" | tr '[:lower:]' '[:upper:]')
+        cur="$2"
+        if [[ "$s" =~ ^([0-9]+)([KMGT]?)$ ]]; then
+            n="${BASH_REMATCH[1]}"; u="${BASH_REMATCH[2]}"
+            case "$u" in
+                K) echo $(( n * 1024 ));;
+                M) echo $(( n * 1024 * 1024 ));;
+                G) echo $(( n * 1024 * 1024 * 1024 ));;
+                T) echo $(( n * 1024 * 1024 * 1024 * 1024 ));;
+                *) echo "$n";;
+            esac
+        elif [[ "$s" =~ ^([0-9]+)%$ ]]; then
+            echo $(( cur * ${BASH_REMATCH[1]} / 100 ))
+        else
+            return 1
+        fi
+    }
+
+    # parted 机器格式取分区起止字节（输出 "start end"）
+    part_bounds() {
+        local disk="$1" num="$2" s e
+        read -r s e <<< "$(parted -m -s "$disk" unit B print 2>/dev/null | awk -F: -v n="$num" '$1==n {print $2, $3}')"
+        s=${s%B}; e=${e%B}
+        printf '%s %s' "$s" "$e"
+    }
+
+    # 分区表类型 gpt / msdos
+    disk_table_type() {
+        parted -m -s "$1" print 2>/dev/null | sed -n '2p' | awk -F: '{print $6}'
+    }
+
+    # parted 防卡交互：给足确认回答后用 q 退出假终端交互循环。
+    # 不能用 yes | ...：yes 无限输出会让 parted 在 ---pretend-input-tty 的交互循环里
+    # 永远读不到 EOF，mkpart 等命令会不停把 y 当非法命令处理，两边空转跑满 CPU。
+    safe_parted() {
+        local out rc
+        out=$(printf 'Yes\nFix\nq\n' | parted ---pretend-input-tty "$@" 2>&1); rc=$?
+        [ "$rc" -eq 141 ] && rc=0
+        [ -n "$out" ] && printf '%s\n' "$out"
+        return "$rc"
+    }
+
     # 磁盘详细信息
     diskinfo() {
         echo
@@ -767,9 +909,448 @@ diskfun() {
         swapon --show 2>/dev/null || cat /proc/swaps
     }
 
+    # ===== 选择物理磁盘 → 磁盘详情 → 分区详情（参考 SDM 重构，沿用数字菜单）=====
+    disk_manager() {
+        local d sz model name lvmflag mp c rootmark diskmaj
+        local -a pdisks=()
+        while true; do
+            echo
+            _blue "===== 选择物理磁盘（仅真实物理设备，loop 已过滤）====="
+            pdisks=()
+            # 只保留 TYPE=disk、且 KNAME 属于真实磁盘设备的项；loop/ram 等由 MAJ:MIN 主设备号过滤。
+            # 用户明确要求不排除根盘，因此这里不再过滤根磁盘。
+            while IFS='|' read -r d sz model maj; do
+                [ -z "$d" ] && continue
+                diskmaj=${maj%%:*}
+                # 7 是 loop 设备的主设备号，必须排除；其余为真实物理磁盘主设备号。
+                case "$diskmaj" in 8|9|179|180|189|202|208|253|254|259) ;; *) continue;; esac
+                name=$(basename "$d")
+                lvmflag=""
+                disk_has_lvm "$d" && lvmflag=" [LVM-暂不支持]"
+                rootmark=""
+                [ "$d" = "$(get_root_disk 2>/dev/null)" ] && rootmark=" [根盘]"
+                mp=$(lsblk -n -o MOUNTPOINT "$d" 2>/dev/null | grep -v '^$' | sort -u | paste -sd, -)
+                pdisks+=("$d")
+                printf "  %2d) %-16s %-10s %-24s%s%s\n" "${#pdisks[@]}" "$name" "$sz" "${model:-未知}" "$rootmark" "$lvmflag"
+                [ -n "$mp" ] && printf "      已挂载: %s\n" "$mp"
+            done < <(lsblk -dpn -o NAME,SIZE,MODEL,MAJ:MIN --pairs 2>/dev/null | sed 's/^NAME="//; s/" SIZE="/|/; s/" MODEL="/|/; s/" MAJ:MIN="/|/; s/"$//')
+            if [ ${#pdisks[@]} -eq 0 ]; then
+                _yellow "没有可操作的物理磁盘。"
+                return 0
+            fi
+            echo
+            echo "  0/b) 返回上级菜单   n) 重新扫描"
+            read -ep "请选择磁盘编号: " c
+            case "$c" in
+                0|b|B) return 0;;
+                n|N) continue;;
+                ""|*[!0-9]*) _red "无效输入。"; continue;;
+            esac
+            if (( c < 1 || c > ${#pdisks[@]} )); then
+                _red "超出范围。"; continue
+            fi
+            d=${pdisks[$((c-1))]}
+            if disk_has_lvm "$d"; then
+                _yellow "该磁盘包含 LVM 结构，暂不支持分区操作。"
+                continue
+            fi
+            disk_detail_menu "$d"
+        done
+    }
+
+    disk_detail_menu() {
+        local disk="$1" c c2 pn pt i fst sz mp
+        local -a parts=()
+        while true; do
+            echo
+            _blue "===== 磁盘详情：$disk ====="
+            echo "  编号 分区           文件系统       大小       挂载点"
+            parts=()
+            # 必须加 -r：否则 lsblk 会给子分区行加树形符号（└─/dev/sda1），
+            # 导致 blkid/findmnt 拿到带符号的伪路径，误判为“未格式化/未挂载/未知文件系统”。
+            while read -r pn pt; do
+                [ "$pt" = "part" ] && parts+=("$pn")
+            done < <(lsblk -rpno NAME,TYPE "$disk" 2>/dev/null)
+            i=1
+            for pn in "${parts[@]}"; do
+                fst=$(part_fstype "$pn"); [ -z "$fst" ] && fst="未格式化"
+                sz=$(lsblk -n -o SIZE "$pn" 2>/dev/null | head -1)
+                mp=$(part_mountpoint "$pn"); [ -z "$mp" ] && mp="-"
+                printf "  %2d)  %-14s %-12s %-10s %s\n" "$i" "$(basename "$pn")" "$fst" "$sz" "$mp"
+                ((i++))
+            done
+            [ ${#parts[@]} -eq 0 ] && _yellow "  （没有分区）"
+            echo
+            echo "  直接输入分区编号进入分区操作"
+            echo "  n) 新建分区   g) 转换分区表(MBR/GPT)   f) 格式化整盘并挂载   b) 返回选盘"
+            read -ep "请选择: " c
+            case "$c" in
+                b|B|0) return 0;;
+                n|N) create_part "$disk"; continue;;
+                g|G) convert_partition_table "$disk"; continue;;
+                f|F) wipe_and_format_disk "$disk"; continue;;
+                ""|*[!0-9]*) _red "无效输入。"; continue;;
+            esac
+            if (( c >= 1 && c <= ${#parts[@]} )); then
+                part_detail_menu "$disk" "${parts[$((c-1))]}"
+            else
+                _red "超出范围。"
+            fi
+        done
+    }
+
+    part_detail_menu() {
+        local disk="$1" part="$2" c mp fst sz
+        while true; do
+            echo
+            _blue "===== 分区操作：$(basename "$part") ($disk) ====="
+            mp=$(part_mountpoint "$part"); fst=$(part_fstype "$part"); sz=$(lsblk -n -o SIZE "$part" 2>/dev/null | head -1)
+            echo "  文件系统: ${fst:-未格式化}   大小: $sz   挂载点: ${mp:-未挂载}"
+            echo "  1) 挂载分区"
+            echo "  2) 卸载分区"
+            echo "  3) 扩容分区（把紧随其后的空闲空间给本分区）"
+            echo "  4) 压缩分区（缩小，腾出空间）"
+            echo "  5) 删除分区"
+            echo "  6) 格式化 / 重建文件系统（清空数据）"
+            echo "  7) 转换文件系统（ext2 → ext3/ext4，保留数据）"
+            echo "  b) 返回磁盘详情"
+            read -ep "请选择: " c
+            case "$c" in
+                1) mount_part "$part";;
+                2) unmount_part "$part";;
+                3) expand_part "$disk" "$part";;
+                4) shrink_part "$disk" "$part";;
+                5) delete_part "$disk" "$part"; return 0;;
+                6) format_part "$part";;
+                7) convert_fs "$part";;
+                b|B|0) return 0;;
+                *) _red "无效输入。";;
+            esac
+        done
+    }
+
+    mount_part() {
+        local part="$1" mp uuid
+        need_cmd mount || return 1
+        mp=$(part_mountpoint "$part")
+        if [ -n "$mp" ]; then _yellow "已挂载于 $mp"; return 0; fi
+        read -ep "请输入挂载点（如 /mnt/data）: " mp
+        validate_mount_path "$mp" || return 1
+        mkdir -p "$mp" || { _red "创建挂载目录失败。"; return 1; }
+        if ! mount "$part" "$mp"; then _red "挂载失败。"; return 1; fi
+        _green "已挂载：$part -> $mp"
+        if confirm_yes "是否写入 /etc/fstab 开机自动挂载？（输入 yes 写入）: "; then
+            uuid=$(blkid -s UUID -o value "$part")
+            if [ -n "$uuid" ] && ! grep -q "$uuid" /etc/fstab; then
+                cp -a /etc/fstab /etc/fstab.bak.$(date +%s)
+                echo "UUID=$uuid $mp $(part_fstype "$part") defaults 0 2" >> /etc/fstab
+                _green "已写入 fstab（原文件已备份）。"
+            else
+                _yellow "未写入（UUID 为空或条目已存在）。"
+            fi
+        fi
+    }
+
+    unmount_part() {
+        local part="$1" mp uuid
+        mp=$(part_mountpoint "$part")
+        if [ -z "$mp" ]; then _yellow "该分区未挂载。"; return 0; fi
+        need_cmd umount || return 1
+        if ! umount "$part"; then _red "卸载失败（可能被占用）。"; return 1; fi
+        _green "已卸载：$part"
+        if confirm_yes "是否同时从 /etc/fstab 移除该分区条目？（输入 yes 移除）: "; then
+            uuid=$(blkid -s UUID -o value "$part")
+            if [ -n "$uuid" ] && grep -q "$uuid" /etc/fstab; then
+                cp -a /etc/fstab /etc/fstab.bak.$(date +%s)
+                sed -i "\|UUID=$uuid|d" /etc/fstab
+                _green "已从 fstab 移除（原文件已备份）。"
+            else
+                _yellow "fstab 中没有该分区条目。"
+            fi
+        fi
+    }
+
+    expand_part() {
+        local disk="$1" part="$2" num mp fst out
+        num=$(part_number "$part")
+        if [ -z "$num" ]; then _red "无法解析分区号。"; return 1; fi
+        need_cmd growpart || return 1
+        need_cmd parted || return 1
+        mp=$(part_mountpoint "$part")
+        fst=$(part_fstype "$part")
+        _yellow "将把 $disk 上分区 $num 扩展到紧随其后的空闲空间。"
+        confirm_yes "确认继续？（输入 yes）: " || { echo "已取消。"; return 0; }
+        echo "执行 growpart..."
+        if out=$(growpart "$disk" "$num" 2>&1); then
+            [ -n "$out" ] && echo "$out"
+        else
+            echo "$out"
+            if echo "$out" | grep -q 'NOCHANGE'; then
+                _yellow "分区已到磁盘末尾或后方无空闲空间（NOCHANGE），继续尝试扩展文件系统。"
+            else
+                _red "growpart 失败，停止。"; return 1
+            fi
+        fi
+        partprobe "$disk" 2>/dev/null || partx -u "$disk" 2>/dev/null || true
+        case "$fst" in
+            ext2|ext3|ext4)
+                need_cmd resize2fs || return 1
+                resize2fs "$part" || { _red "resize2fs 失败。"; return 1; };;
+            xfs)
+                need_cmd xfs_growfs || return 1
+                if [ -z "$mp" ]; then _yellow "xfs 扩容需要已挂载，请先挂载该分区。"; return 1; fi
+                xfs_growfs "$mp" || { _red "xfs_growfs 失败。"; return 1; };;
+            *)
+                _yellow "未知文件系统 ${fst:-空}，仅调整了分区表，未调整文件系统。";;
+        esac
+        _green "操作完成。当前大小：$(lsblk -n -o SIZE "$part" 2>/dev/null | head -1)"
+    }
+
+    shrink_part() {
+        local disk="$1" part="$2" num mp fst start end cur target target_b aligned end_new
+        local -a parts=()
+        mp=$(part_mountpoint "$part")
+        [ -n "$mp" ] && { _red "请先卸载该分区再压缩（当前挂载于 $mp）。"; return 1; }
+        fst=$(part_fstype "$part")
+        case "$fst" in
+            ext2|ext3|ext4) ;;
+            *) _red "压缩仅支持 ext2/3/4，当前为 ${fst:-未知}（xfs 不支持缩容）。"; return 1;;
+        esac
+        need_cmd e2fsck || return 1
+        need_cmd resize2fs || return 1
+        need_cmd parted || return 1
+        num=$(part_number "$part")
+        read -r start end <<< "$(part_bounds "$disk" "$num")"
+        [ -z "$start" ] && { _red "无法读取分区边界。"; return 1; }
+        cur=$(( end - start ))
+        echo "当前分区大小：$(( cur / 1024 / 1024 )) MiB"
+        read -ep "请输入目标大小（如 20G / 500M / 50%）: " target
+        target_b=$(parse_size_bytes "$target" "$cur") || { _red "大小格式无效。"; return 1; }
+        (( target_b < 16777216 )) && target_b=16777216
+        aligned=$(( target_b / 65536 * 65536 ))
+        (( aligned >= cur )) && { _red "目标大小必须小于当前分区大小。"; return 1; }
+        _red "警告：压缩分区会修改分区表，操作前请备份重要数据。"
+        confirm_yes "确认继续？（输入 yes）: " || { echo "已取消。"; return 0; }
+        echo "检查文件系统..."
+        e2fsck -f -y "$part" || { _red "e2fsck 失败，停止。"; return 1; }
+        echo "缩小文件系统..."
+        resize2fs "$part" "$(( aligned / 1024 ))K" || { _red "resize2fs 失败，停止。"; return 1; }
+        echo "缩小分区..."
+        end_new=$(( start + aligned + 1048576 ))
+        safe_parted "$disk" unit B resizepart "$num" "${end_new}B" || { _red "resizepart 失败，请手动检查。"; return 1; }
+        partprobe "$disk" 2>/dev/null || true
+        _green "压缩完成。当前大小：$(lsblk -n -o SIZE "$part" 2>/dev/null | head -1)"
+        # 加 -r 避免子分区行带树形符号（└─/dev/xxx），保证设备名干净。
+        while read -r pn pt; do [ "$pt" = "part" ] && parts+=("$pn"); done < <(lsblk -rpno NAME,TYPE "$disk" 2>/dev/null)
+        _yellow "腾出的空闲空间位于 $(basename "$part") 之后。"
+        _yellow "说明：parted 无法移动分区起始位置，空闲空间不能直接并入后方分区；"
+        _yellow "      如需利用，请在磁盘详情中用“新建分区”在空隙中创建新分区。"
+        if confirm_yes "现在就去该磁盘创建分区使用这些空闲空间？（输入 yes 继续）: "; then
+            create_part "$disk"
+        fi
+    }
+
+    delete_part() {
+        local disk="$1" part="$2" mp num uuid
+        mp=$(part_mountpoint "$part")
+        [ -n "$mp" ] && { _red "请先卸载该分区（当前挂载于 $mp）。"; return 1; }
+        need_cmd parted || return 1
+        num=$(part_number "$part")
+        uuid=$(blkid -s UUID -o value "$part" 2>/dev/null)
+        _red "警告：删除分区 $(basename "$part") 将丢失其上所有数据，不可撤销！"
+        confirm_yes "确认删除？（输入 yes）: " || { echo "已取消。"; return 0; }
+        if ! safe_parted "$disk" rm "$num"; then _red "删除失败。"; return 1; fi
+        partprobe "$disk" 2>/dev/null || true
+        _green "分区已删除。"
+        if [ -n "$uuid" ] && confirm_yes "是否清理 /etc/fstab 中该分区条目？（输入 yes 清理）: "; then
+            if grep -q "$uuid" /etc/fstab; then
+                cp -a /etc/fstab /etc/fstab.bak.$(date +%s)
+                sed -i "\|UUID=$uuid|d" /etc/fstab
+                _green "已清理（原文件已备份）。"
+            fi
+        fi
+    }
+
+    format_part() {
+        local part="$1" mp fst choice fs uuid mp2
+        mp=$(part_mountpoint "$part")
+        [ -n "$mp" ] && { _red "请先卸载该分区再格式化（当前挂载于 $mp）。"; return 1; }
+        echo "  1) ext4   2) xfs   3) ext3   4) ext2   b) 取消"
+        read -ep "选择目标文件系统: " choice
+        case "$choice" in
+            1) fs=ext4;; 2) fs=xfs;; 3) fs=ext3;; 4) fs=ext2;; b|B) return 0;;
+            *) _red "无效选择。"; return 1;;
+        esac
+        need_cmd "mkfs.$fs" || return 1
+        fst=$(part_fstype "$part")
+        _red "警告：格式化会清空 $(basename "$part") 的全部数据${fst:+（当前文件系统：$fst）}！"
+        confirm_yes "确认格式化为 $fs？（输入 yes）: " || { echo "已取消。"; return 0; }
+        # 各文件系统强制覆盖参数不同：ext 系列用 -F，xfs 用小写 -f。
+        # 统一走 mkfs -t ... -F 会把 -F 透传给 mkfs.xfs 导致 unknown option。
+        case "$fs" in
+            xfs)  mkfs.xfs -f "$part" ;;
+            *)    mkfs -t "$fs" -F "$part" ;;
+        esac
+        if [ $? -ne 0 ]; then _red "格式化失败。"; return 1; fi
+        _green "已格式化为 $fs。"
+        if confirm_yes "是否挂载并写入 fstab？（输入 yes 继续）: "; then
+            read -ep "挂载点（如 /mnt/data）: " mp2
+            validate_mount_path "$mp2" || return 1
+            mkdir -p "$mp2" && mount "$part" "$mp2" || { _red "挂载失败。"; return 1; }
+            uuid=$(blkid -s UUID -o value "$part")
+            if [ -n "$uuid" ] && ! grep -q "$uuid" /etc/fstab; then
+                cp -a /etc/fstab /etc/fstab.bak.$(date +%s)
+                echo "UUID=$uuid $mp2 $fs defaults 0 2" >> /etc/fstab
+            fi
+            _green "完成：$part -> $mp2"
+        fi
+    }
+
+    convert_fs() {
+        local part="$1" fst mp target rc
+        mp=$(part_mountpoint "$part")
+        fst=$(part_fstype "$part")
+        if [ "$fst" != "ext2" ]; then
+            _yellow "仅支持 ext2 → ext3/ext4 的无损转换；当前为 ${fst:-未知}。跨文件系统请用“格式化/重建”（会清空数据）。"
+            return 0
+        fi
+        [ -n "$mp" ] && { _red "请先卸载该分区再转换（当前挂载于 $mp）。"; return 1; }
+        need_cmd tune2fs || return 1
+        need_cmd e2fsck || return 1
+        echo "  1) 转为 ext3   2) 转为 ext4"
+        read -ep "选择: " target
+        case "$target" in
+            1) tune2fs -j "$part" && e2fsck -f -y "$part";;
+            2) tune2fs -O extents,uninit_bg,dir_index "$part" && e2fsck -f -y "$part";;
+            *) _red "无效选择。"; return 1;;
+        esac
+        rc=$?
+        [ "$rc" -eq 0 ] && _green "转换完成，当前文件系统：$(part_fstype "$part")" || _red "转换失败。"
+    }
+
+    create_part() {
+        local disk="$1" sel target start end gap size_b newpart tbl
+        local s e i
+        local -a starts=() ends=()
+        need_cmd parted || return 1
+        echo "=== 磁盘 $disk 上的空闲空间 ==="
+        # parted 机器格式：number:start:end:size:fs-type:type:flags，空闲行 type=free。
+        # 旧实现错把 $5 当 free，实际 free 在第 6 列，且行尾带 ;，导致空盘时漏检。
+        while read -r s e; do
+            (( e - s <= 1048576 )) && continue
+            starts+=("$s"); ends+=("$e")
+            printf "  %2d) %d MiB ~ %d MiB（可用 %d MiB）\n" "${#starts[@]}" $(( s/1048576 )) $(( e/1048576 )) $(( (e-s)/1048576 ))
+        done < <(parted -m -s "$disk" unit B print free 2>/dev/null | awk -F: '{
+                    line=$0; gsub(/;/,"",line); n=split(line,f,":")
+                    s=f[2]; e=f[3]; gsub(/B/,"",s); gsub(/B/,"",e)
+                    if ((f[6]=="free" || f[5]=="free") && s ~ /^[0-9]+$/ && e ~ /^[0-9]+$/) print s, e
+                 }')
+        # 没有空闲行：多因磁盘无分区表（全新盘），询问后建表并整盘分一个区
+        if [ ${#starts[@]} -eq 0 ]; then
+            _yellow "parted 未识别到空闲空间，可能是全新磁盘（无分区表）。"
+            if confirm_yes "是否创建全新 GPT 分区表并把整盘分为一个分区？（输入 yes）: "; then
+                if ! safe_parted "$disk" mklabel gpt; then _red "创建分区表失败。"; return 1; fi
+                if ! safe_parted "$disk" mkpart primary ext4 1MiB 100%; then _red "创建分区失败。"; return 1; fi
+                partprobe "$disk" 2>/dev/null || true
+                newpart="${disk}1"; [[ "$disk" =~ nvme[0-9]+n[0-9]+$ || "$disk" =~ mmcblk[0-9]+$ ]] && newpart="${disk}p1"
+                if wait_for_part "$newpart"; then
+                    _green "新分区已创建：$newpart"
+                    if confirm_yes "是否立即格式化并挂载？（输入 yes 继续）: "; then format_part "$newpart"; fi
+                else
+                    _yellow "新分区设备节点未及时出现，请手动检查。"
+                fi
+            fi
+            return 0
+        fi
+        read -ep "选择空闲空间编号（输入 yes 使用最大块，b 取消）: " sel
+        [ "$sel" = "b" -o "$sel" = "B" ] && return 0
+        if [ "$sel" = "yes" ]; then
+            sel=1
+            for ((i=2; i<=${#starts[@]}; i++)); do
+                (( ends[$((i-1))] - starts[$((i-1))] > ends[$((sel-1))] - starts[$((sel-1))] )) && sel=$i
+            done
+        fi
+        [[ "$sel" =~ ^[0-9]+$ ]] && (( sel>=1 && sel<=${#starts[@]} )) || { _red "无效选择。"; return 1; }
+        start=${starts[$((sel-1))]}; gap=$(( ends[$((sel-1))] - start ))
+        read -ep "新分区大小（如 10G / 500M / 50%，回车用全部）: " target
+        [ -z "$target" ] && target="$gap"
+        size_b=$(parse_size_bytes "$target" "$gap") || { _red "大小格式无效。"; return 1; }
+        (( size_b > gap )) && size_b=$gap
+        end=$(( start + size_b - 1 ))
+        _red "警告：即将在 $disk 上创建分区（$(( size_b/1048576 )) MiB），请确认数据已备份。"
+        confirm_yes "确认创建？（输入 yes）: " || { echo "已取消。"; return 0; }
+        if ! safe_parted "$disk" mkpart primary ext4 "${start}B" "${end}B"; then
+            _red "创建分区失败。"; return 1
+        fi
+        partprobe "$disk" 2>/dev/null || true
+        # 新分区名：取 parted 输出中最后一个分区号，避免按数量数错（有空隙时会偏小）
+        newpart=$(parted -m -s "$disk" unit B print 2>/dev/null | awk -F: '$1 ~ /^[0-9]+$/ {last=$1} END{print last}')
+        if [ -z "$newpart" ]; then
+            _yellow "无法确定新分区号，请手动检查。"
+            return 1
+        fi
+        if [[ "$disk" =~ nvme[0-9]+n[0-9]+$ || "$disk" =~ mmcblk[0-9]+$ ]]; then
+            newpart="${disk}p${newpart}"
+        else
+            newpart="${disk}${newpart}"
+        fi
+        wait_for_part "$newpart" || { _yellow "新分区设备节点未及时出现，请手动检查。"; return 1; }
+        _green "新分区已创建：$newpart"
+        if confirm_yes "是否立即格式化并挂载？（输入 yes 继续）: "; then
+            format_part "$newpart"
+        fi
+    }
+
+    convert_partition_table() {
+        local disk="$1" cur c newtype
+        need_cmd parted || return 1
+        need_cmd sgdisk || return 1
+        cur=$(disk_table_type "$disk")
+        [ -z "$cur" ] && { _red "无法识别当前分区表类型。"; return 1; }
+        if lsblk -n -o MOUNTPOINT "$disk" 2>/dev/null | grep -q .; then
+            _red "该磁盘有已挂载分区，请先卸载后再转换。"
+            return 1
+        fi
+        echo "当前分区表类型：$cur"
+        _red "警告：转换分区表会清空磁盘上所有分区和数据，不可撤销！"
+        confirm_yes "确认清空所有分区并转换？（输入 yes）: " || { echo "已取消。"; return 0; }
+        # 先备份分区表（GPT 用 sgdisk -b，MBR 用 sfdisk -d），仅备份到 /root
+        if [ "$cur" = "gpt" ]; then
+            command -v sgdisk >/dev/null 2>&1 && sgdisk -b "/root/$(basename "$disk").sgdisk.bak.$(date +%s)" "$disk" >/dev/null 2>&1 || true
+        else
+            command -v sfdisk >/dev/null 2>&1 && sfdisk -d "$disk" > "/root/$(basename "$disk").sfdisk.bak.$(date +%s)" 2>/dev/null || true
+        fi
+        sgdisk -Z "$disk" || { _red "清空分区表失败。"; return 1; }
+        if [ "$cur" = "gpt" ]; then
+            safe_parted "$disk" mklabel msdos; newtype="MBR(msdos)"
+        else
+            safe_parted "$disk" mklabel gpt; newtype="GPT"
+        fi
+        partprobe "$disk" 2>/dev/null || true
+        _green "分区表已转换为 $newtype（分区表备份在 /root/）。请用“新建分区”重新创建分区。"
+    }
+
+    wipe_and_format_disk() {
+        local disk="$1" part
+        if lsblk -n -o MOUNTPOINT "$disk" 2>/dev/null | grep -q .; then
+            _red "该磁盘有已挂载分区，请先卸载后再格式化整盘。"
+            return 1
+        fi
+        need_cmd parted || return 1
+        _red "警告：将清空磁盘 $disk 上的全部数据，不可撤销！"
+        confirm_yes "确认继续？（输入 yes）: " || { echo "已取消。"; return 0; }
+        safe_parted "$disk" mklabel gpt || { _red "创建分区表失败。"; return 1; }
+        safe_parted "$disk" mkpart primary ext4 1MiB 100% || { _red "创建分区失败。"; return 1; }
+        partprobe "$disk" 2>/dev/null || true
+        part="${disk}1"
+        [[ "$disk" =~ nvme[0-9]+n[0-9]+$ || "$disk" =~ mmcblk[0-9]+$ ]] && part="${disk}p1"
+        wait_for_part "$part" || { _red "新分区未出现，请手动检查。"; return 1; }
+        format_part "$part"
+    }
+
     menuname='首页/磁盘管理'
     echo "diskfun" >$installdir/config/lastfun
-    options=("磁盘信息" diskinfo "磁盘占用扫描" diskscan "查看磁盘SMART信息" disksmartinfo "磁盘测速" diskspeedtest "扩容根分区" expandroot "swap分区转swapfile" swap_to_swapfile "格式化其他磁盘并挂载" formatotherdisks)
+    options=("磁盘信息" diskinfo "磁盘占用扫描" diskscan "查看磁盘SMART信息" disksmartinfo "磁盘测速" diskspeedtest "扩容根分区" expandroot "swap分区转swapfile" swap_to_swapfile "磁盘分区" disk_manager "一键格式化磁盘并挂载" formatotherdisks)
 
     menu "${options[@]}"
 
