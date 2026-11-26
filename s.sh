@@ -992,9 +992,6 @@ version_manager() {
 # 菜单渲染
 
 staticmenu() {
-    if [ $is_param_mode -eq 1 ]; then
-        return
-    fi
     printf "\033[H\033[2J"
     echo
     
@@ -1066,10 +1063,6 @@ staticmenu() {
 menu() {
     if [ "$menustyle" = "staticmenu" ]; then
         staticmenu "$@"
-        return
-    fi
-
-    if [ "$is_param_mode" -eq 1 ]; then
         return
     fi
 
@@ -1566,21 +1559,6 @@ selfversionfun() {
 
 # 脚本运行
 selfrun(){
-    
-    is_param_mode=0
-    if [ $# -gt 0 ]; then
-        is_param_mode=1
-        for func in "$@"; do
-            if declare -F "$func" >/dev/null 2>&1; then
-                $func
-            else
-                _red "错误：函数 '$func' 不存在"
-                exit 1
-            fi
-        done
-        exit 0
-    fi
-    
     if [ -z "$(cat $installdir/config/lastfun)" ]; then
         main
     else
@@ -1592,4 +1570,4 @@ selfinitfun
 loadfilefun
 exceptionfun
 selfversionfun
-selfrun "$@"
+selfrun
