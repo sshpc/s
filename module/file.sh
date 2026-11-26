@@ -4,7 +4,6 @@ filefun() {
     echo
     _yellow "当前菜单: $menuname "
     echo
-    # 剪贴板状态
     if [[ -s "${installdir}/config/tmpcopy" ]]; then
         local _cb_op _cb_src
         _cb_op=$(sed -n '1p' "${installdir}/config/tmpcopy")
@@ -18,17 +17,15 @@ filefun() {
     echo
     }
 
-    #查看当前路径文件夹
+    # 查看当前路径文件夹
     catcurrentpathfolder(){
         echo
-        # 获取当前路径下的所有目录（不含隐藏目录）
         dirs=($(ls -d */ 2>/dev/null | sed 's#/##'))
         if [[ ${#dirs[@]} -eq 0 ]]; then
             echo "当前目录下没有可用目录"
             return 1
         fi
 
-        # 打印带序号的目录列表
         _blue "序号\t目录名"
         for i in "${!dirs[@]}"; do
             echo -e "$((i + 1))\t${dirs[$i]}"
@@ -36,24 +33,19 @@ filefun() {
         echo
     }
 
-    #压缩一个目录
+    # 压缩一个目录
     packagingdir_targz(){
-        #查看当前路径文件夹
         catcurrentpathfolder
-        # 用户输入序号
         read -rp "请输入目录序号： " index
 
-        # 检查序号合法性
         if [[ "$index" =~ ^[0-9]+$ ]] && (( index >= 1 && index <= ${#dirs[@]} )); then
             dirtmp=${dirs[$((index - 1))]}
 
-            #打包后文件名
             filenametmp="$dirtmp.tar.gz"
 
             _blue '目录大小'
             du -sh $dirtmp
 
-            # 确认
             read -rp "确认将 '$dirtmp' (包含子目录) 打包为 '$filenametmp' ? [y/N]: " confirm
             if [[ "$confirm" =~ ^[Yy]$ ]]; then
                 tar -czf $filenametmp $dirtmp &
@@ -68,41 +60,33 @@ filefun() {
             return 1
         fi
     }
-    #解压缩目录
+    # 解压缩目录
     uncompresseddir_targz(){
-        #查看当前路径tar.gz
          echo
-        # 获取当前路径下的所有 tar.gz 文件（不含隐藏文件）
         tar_files=($(ls *.tar.gz 2>/dev/null))
         if [[ ${#tar_files[@]} -eq 0 ]]; then
             echo "当前目录下没有 tar.gz 文件"
             return 1
         fi
 
-        # 打印带序号的 tar.gz 文件列表
         _blue "序号\ttar.gz 文件名"
         for i in "${!tar_files[@]}"; do
             echo -e "$((i + 1))\t${tar_files[$i]}"
         done
         echo
-        # 用户输入序号
         read -rp "请输入要解压的文件序号： " index
 
-        # 检查序号合法性
         if [[ "$index" =~ ^[0-9]+$ ]] && (( index >= 1 && index <= ${#tar_files[@]} )); then
-            # 获取选中的 tar.gz 文件
             selected_file="${tar_files[$((index - 1))]}"
 
             _blue "待解压文件信息"
-            ls -lh "$selected_file"  # 显示文件大小和详情
+            ls -lh "$selected_file"
 
-            # 确认解压操作
             read -rp "确认解压 '$selected_file' 到当前目录吗？[y/N]: " confirm
             if [[ "$confirm" =~ ^[Yy]$ ]]; then
-                # 执行解压命令（-xzf 为解压参数）
                 tar -xzf "$selected_file" &
-                loading $!  # 显示加载动画
-                wait  # 等待解压完成
+                loading $!
+                wait
                 _green "解压完成，文件已提取至当前目录"
             else
                 echo "已取消解压操作。"
@@ -113,9 +97,8 @@ filefun() {
         fi
     }
 
-    #配置目录权限www-data
 
-    #压缩一个目录为 zip
+    # 压缩一个目录为 zip
     packagingdir_zip(){
         catcurrentpathfolder
         read -rp "请输入目录序号： " index
@@ -139,7 +122,7 @@ filefun() {
         fi
     }
 
-    #解压缩 zip 文件
+    # 解压缩 zip 文件
     uncompresseddir_zip(){
         echo
         zip_files=($(ls *.zip 2>/dev/null))
@@ -173,7 +156,7 @@ filefun() {
         fi
     }
 
-    #压缩一个目录为 rar
+    # 压缩一个目录为 rar
     packagingdir_rar(){
         catcurrentpathfolder
         read -rp "请输入目录序号： " index
@@ -200,7 +183,7 @@ filefun() {
         fi
     }
 
-    #解压缩 rar 文件
+    # 解压缩 rar 文件
     uncompresseddir_rar(){
         echo
         rar_files=($(ls *.rar 2>/dev/null))
@@ -253,16 +236,12 @@ filefun() {
 
 
     chownwwwdata() {
-        #查看当前路径文件夹
         catcurrentpathfolder
-        # 用户输入序号
         read -rp "请输入目录序号： " index
 
-        # 检查序号合法性
         if [[ "$index" =~ ^[0-9]+$ ]] && (( index >= 1 && index <= ${#dirs[@]} )); then
             dirtmp=${dirs[$((index - 1))]}
 
-            # 确认
             read -rp "确认将 '$dirtmp' (包含子目录) 权限修改为 www-data? [y/N]: " confirm
             if [[ "$confirm" =~ ^[Yy]$ ]]; then
                 chown -R www-data:www-data "$dirtmp"
@@ -278,16 +257,14 @@ filefun() {
         fi
     }
 
-    #多线程下载
+    # 多线程下载
     aria2fun() {
-        #检查aria2是否已安装
         check_and_install aria2
         echo 'aria2c -s 2 -x 2 -c http://xxx/xxx'
     }
 
-    #SMB 连接浏览与下载
+    # SMB 连接浏览与下载
     smbfun() {
-        #检查smbclient是否已安装
         if ! command -v smbclient &>/dev/null; then
             check_and_install smbclient
         fi
@@ -307,7 +284,6 @@ filefun() {
             return 1
         fi
 
-        # 统一分隔符并解析主机与共享名
         local raw="${smbaddr//\\//}"
         while [[ "$raw" == /* ]]; do raw="${raw#/}"; done
         local host="${raw%%/*}"
@@ -325,7 +301,6 @@ filefun() {
         local auth_desc="匿名"
         local smb_ok=0
 
-        # 首先尝试匿名登录
         _blue "尝试匿名登录 $host ..."
         if [[ -n "$share" ]]; then
             smbclient "//$host/$share" -N -c 'ls' &>/dev/null || smb_ok=1
@@ -362,7 +337,6 @@ filefun() {
             _green "匿名登录成功"
         fi
 
-        # 未指定共享名时，列出共享供选择
         if [[ -z "$share" ]]; then
             local -a shares=()
             local sline=""
@@ -396,7 +370,6 @@ filefun() {
             fi
         fi
 
-        # 目录浏览循环
         local cwd=""
         local sel=0
         local key="" rest=""
@@ -405,7 +378,6 @@ filefun() {
         local curname="" curtype="" localname=""
 
         while true; do
-            # 拉取当前 SMB 目录列表
             local -a smbcmd=(smbclient "//$host/$share" "${auth_opts[@]}")
             [[ -n "$cwd" ]] && smbcmd+=(-D "$cwd")
             listing=$("${smbcmd[@]}" -c 'ls' 2>/dev/null)
@@ -430,7 +402,6 @@ filefun() {
                     printf "%s|%s|%s\n", name, type, size
                 }')
 
-            # 目录排在前面，.. 排最前
             local -a dnames=() dtypes=() dsizes=() fnames=() ftypes=() fsizes=()
             for i in "${!names[@]}"; do
                 if [[ "${names[$i]}" == ".." ]]; then
@@ -450,7 +421,6 @@ filefun() {
 
             [[ $sel -ge $total ]] && sel=$((total > 0 ? total - 1 : 0))
 
-            # 渲染列表
             printf "\033[H\033[2J"
             _blue "SMB: //$host/$share    用户: $auth_desc    路径: /${cwd}"
             echo
@@ -478,7 +448,6 @@ filefun() {
             echo
             _yellow "↑/↓ 选择    回车 进入目录/下载文件    q 退出"
 
-            # 读取按键
             key=""
             IFS= read -rsn1 key
             if [[ "$key" == $'\x1b' ]]; then
@@ -534,13 +503,11 @@ filefun() {
                         [[ "$expsize" =~ ^[0-9]+$ ]] || expsize=0
                         echo
                         _blue "开始下载: $curname  ->  $(pwd)/$localname"
-                        # 后台下载：stdout/stderr 全部隔离，屏蔽 smb.conf 参数告警
                         local dlerr="/tmp/.s_smb_err.$$"
                         rm -f "$localname"
                         "${smbcmd[@]}" -c "get \"$curname\" \"$localname\"" >/dev/null 2>"$dlerr" &
                         local dlpid=$!
                         if [[ $expsize -gt 0 ]]; then
-                            # 已知大小：显示实时进度条
                             local bar_len=30 spin='|/-\' si=0
                             tput civis 2>/dev/null
                             while kill -0 "$dlpid" 2>/dev/null; do
@@ -562,7 +529,6 @@ filefun() {
                             tput cnorm 2>/dev/null
                             printf "\r\033[K"
                         else
-                            # 大小未知：沿用脚本自带的转圈等待
                             loading "$dlpid"
                         fi
                         wait "$dlpid"
@@ -581,7 +547,7 @@ filefun() {
         done
     }
 
-    #统计当前目录占用
+    # 统计当前目录占用
     statisticsusage() {
         _blue '占用空间最多的前5文件夹'
         du -sh * | sort -rh | head -n 5
@@ -590,7 +556,7 @@ filefun() {
     }
     
 
-    #统计目录文件行数
+    # 统计目录文件行数
     countfileslines() {
         echo
         _yellow '目前仅支持单一文件后缀搜索!'
@@ -602,14 +568,10 @@ filefun() {
         if [[ "$suffix" = "" ]]; then
             suffix='sh'
         fi
-        # 使用 find 命令递归地查找指定目录下的所有文件,并执行计算行数的命令
         total=$(find $abpath -type f -name "*.$suffix" -exec wc -l {} \; | awk '{total += $1} END{print total}')
-        # 输出总行数
         echo "$abpath 目录下的 后缀为 $suffix 文件的总行数是: $total"
     }
 
-    # ========== 文件管理：复制/剪切/粘贴/删除/重命名 ==========
-    # 剪贴板文件（保存操作类型与源绝对路径）
     local _fm_clipboard="${installdir}/config/tmpcopy"
     local -a _fm_items=()
     local _fm_selected=""

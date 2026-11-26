@@ -6,19 +6,14 @@ servicefun() {
     echo
     }
 
-    # ---------- 服务列表采集 ----------
-    # 统一采集 systemd 服务：名称 | 运行状态 | 开机自启状态
-    # 结果存放在全局数组 SVC_ROWS（元素格式 name|active|enabled），
-    # 同时按需输出为 "name|state" 供后续动作函数使用。
+    # 服务列表采集
     _svc_collect() {
         SVC_ROWS=()
         local -A seen_active=()
         local -A seen_enabled=()
 
-        # 第一遍：已加载的 unit（含 inactive/failed），拿到真实运行状态
         while IFS= read -r line; do
             [[ -z "$line" ]] && continue
-            # failed 行以 "●" 开头，需要去掉，否则会被当成服务名
             line="${line/#●/}"
             line="${line## }"
             [[ -z "$line" ]] && continue
@@ -28,7 +23,6 @@ servicefun() {
             active=$(echo "$line" | awk '{print $3}')
             [[ -z "$name" ]] && continue
             [[ "$name" == "UNIT" || "$name" == "0" ]] && continue
-            # 只接受合法的 unit 名，过滤表头/说明等杂行
             [[ "$name" == *.service ]] || continue
             [[ "$load" == "not-found" ]] && continue
             [[ -n "${seen_active[$name]:-}" ]] && continue
@@ -36,7 +30,6 @@ servicefun() {
             SVC_ROWS+=("$name|$active|")
         done < <(systemctl list-units --type=service --all --no-legend --no-pager 2>/dev/null)
 
-        # 第二遍：磁盘上全部 unit 文件（含从未启动过的 inactive 服务）+ 自启状态
         while IFS= read -r line; do
             [[ -z "$line" ]] && continue
             line="${line/#●/}"
@@ -48,17 +41,14 @@ servicefun() {
             [[ -z "$name" ]] && continue
             [[ "$name" == *.service ]] || continue
             [[ "$name" == "UNIT" || "$name" == "0" ]] && continue
-            # masked 的服务无法启动，不列入
             [[ "$estate" == "masked" ]] && continue
             seen_enabled[$name]="$estate"
             if [[ -z "${seen_active[$name]:-}" ]]; then
                 seen_active[$name]=1
-                # 未加载过 = 未运行
                 SVC_ROWS+=("$name|inactive|$estate")
             fi
         done < <(systemctl list-unit-files --type=service --no-legend --no-pager 2>/dev/null)
 
-        # 回填自启状态
         local i row
         for i in "${!SVC_ROWS[@]}"; do
             row="${SVC_ROWS[$i]}"
@@ -73,8 +63,7 @@ servicefun() {
         done
     }
 
-    # ---------- 服务列表显示 ----------
-    # $1 = running(仅运行中) | inactive/stopped(仅未运行) | enabled | disabled | all
+    # 服务列表显示
     servicelistfun() {
         echo
         local filter="${1:-all}"
@@ -138,7 +127,6 @@ servicefun() {
         done
 
         echo
-        # 动作函数读取此文件：name|状态
         : > /tmp/.s_services_list
         for row in "${services[@]}"; do
             nm="${row%%|*}"
@@ -148,7 +136,7 @@ servicefun() {
         return 0
     }
 
-    # $1=systemctl 动作  $2=中文说明  $3=列表过滤(running|inactive|enabled|disabled|all)
+    # $1=systemctl 动作  $2=中文说明  $3=列表过滤(running|inactive|enabled|d…
     serviceactionfun() {
         local action="$1"
         local action_cn="$2"
@@ -231,7 +219,6 @@ servicefun() {
             _yellow "systemctl stop/start 服务名称"
             echo
             read -ep "请输入服务名称: " systemdname
-            # 检查服务是否已存在
             if systemctl list-unit-files | grep -q "^${systemdname}.service"; then
                 _red "服务 ${systemdname} 已存在"
                 return
@@ -246,9 +233,7 @@ servicefun() {
             _yellow "例子: /root 或 /usr/local/bin（留空则使用系统默认目录 /）"
             echo
             read -ep "请输入执行目录: " workdir
-            # 空值处理：默认使用根目录 /
             [[ -z "$workdir" ]] && workdir="/"
-            # 检查目录是否存在（可选，增强健壮性）
             if [[ ! -d "$workdir" ]]; then
                 _red "警告：执行目录 ${workdir} 不存在，是否继续？(y/n)"
                 read -r confirm
@@ -296,7 +281,6 @@ servicefun() {
             systemctl enable $systemdname
             echo
             _blue "操作完成,写入日志"
-            #写入日志
             slog set systemctl "add-systemctl | $systemdname | $datevar"
             _blue "开启服务"
             systemctl start $systemdname
@@ -312,7 +296,6 @@ servicefun() {
 
         servicedel() {
 
-            #读取日志
             slog get systemctl
             echo
             read -ep "请输入删除的服务名称: " systemdname
@@ -333,20 +316,17 @@ servicefun() {
             echo
             rm -rf /usr/lib/systemd/system/$systemdname.service
             rm -rf /etc/systemd/system/multi-user.target.wants/$systemdname.service
-            #重新加载 systemd 配置
             systemctl daemon-reload
-            #写入日志
             slog set systemctl "del-systemctl | $systemdname | $datevar"
             _blue "操作完成"
             echo
 
         }
 
-        #服务配置日志
+        # 服务配置日志
         servicelogfun() {
             _yellow systemctl
             echo
-            #读取日志
             slog get systemctl
         }
 
@@ -359,77 +339,62 @@ servicefun() {
 
 
     upservicetime(){
-       # 严格模式放进子 shell：函数返回时不会把 -euo pipefail 泄漏到全局 shell
        (
        set -euo pipefail
 
-        # 临时文件存储服务信息
         temp_file=$(mktemp)
 
-        # 函数：将运行时间字符串转换为总秒数（用于排序）
+        # 将运行时间字符串转换为总秒数（用于排序）
         convert_to_seconds() {
             local time_str="$1"
             local total_seconds=0
 
-            # 匹配天（d/days）、时（h/hours）、分（min/minutes/m）、秒（s/seconds）
             if [[ $time_str =~ ([0-9]+)\ (d|days) ]]; then
-                total_seconds=$(( ${BASH_REMATCH[1]} * 86400 ))  # 1天=86400秒
+                total_seconds=$(( ${BASH_REMATCH[1]} * 86400 ))
             fi
             if [[ $time_str =~ ([0-9]+)\ (h|hours) ]]; then
-                total_seconds=$(( total_seconds + ${BASH_REMATCH[1]} * 3600 ))  # 1小时=3600秒
+                total_seconds=$(( total_seconds + ${BASH_REMATCH[1]} * 3600 ))
             fi
             if [[ $time_str =~ ([0-9]+)\ (min|minutes|m) ]]; then
-                total_seconds=$(( total_seconds + ${BASH_REMATCH[1]} * 60 ))  # 1分钟=60秒
+                total_seconds=$(( total_seconds + ${BASH_REMATCH[1]} * 60 ))
             fi
             if [[ $time_str =~ ([0-9]+)\ (s|seconds) ]]; then
-                total_seconds=$(( total_seconds + ${BASH_REMATCH[1]} ))  # 秒
+                total_seconds=$(( total_seconds + ${BASH_REMATCH[1]} ))
             fi
 
             echo $total_seconds
         }
 
-        # 1. 获取所有运行中的服务（仅service类型，状态为running）
         running_services=$(systemctl list-units --type=service --state=running --no-legend | awk '{print $1}')
 
-        # 2. 遍历每个服务，提取关键信息
         for service in $running_services; do
-            # 提取服务运行时间（完整字符串，如"1 days"、"2h 30min"）
             status_output=$(systemctl status "$service" --no-pager)
-            # 修正正则：匹配"since ...; "后的完整时间（直到" ago"结束）
-            runtime_str=$(echo "$status_output" | grep -oP 'Active: active \(running\) since .*?; \K.*?(?= ago)' | sed 's/  */ /g')  # 合并多余空格
+            runtime_str=$(echo "$status_output" | grep -oP 'Active: active \(running\) since .*?; \K.*?(?= ago)' | sed 's/  */ /g')
 
-            # 提取服务主进程PID
             main_pid=$(systemctl show -p MainPID "$service" | cut -d= -f2)
             if [[ $main_pid -le 0 || -z $main_pid ]]; then
                 continue
             fi
 
-            # 验证PID是否存在
             if ! ps -p "$main_pid" >/dev/null 2>&1; then
                 continue
             fi
 
-            # 提取进程名（确保完整，避免被拆分）
-            process_name=$(ps -p "$main_pid" -o comm= | tr -s ' ')  # 移除多余空格
+            process_name=$(ps -p "$main_pid" -o comm= | tr -s ' ')
 
-            # 转换运行时间为总秒数（用于排序）
             runtime_seconds=$(convert_to_seconds "$runtime_str")
 
-            # 写入临时文件（用分隔符"|"避免字段含空格导致拆分错误）
             echo "$service|$runtime_str|$runtime_seconds|$main_pid|$process_name" >> "$temp_file"
         done
 
-        # 3. 按总秒数升序排序，取前10个，格式化输出
         echo "最新运行的10个服务（按运行时间升序）："
         echo "-----------------------------------------------------------------"
         printf "%-30s %-20s %-20s %-15s\n" "服务名" "运行时间" "进程名" "进程ID"
         echo "-----------------------------------------------------------------"
-        # 用"|"分割字段，确保空格不影响列对齐
         sort -n -t'|' -k3 "$temp_file" | head -n 10 | awk -F'|' '{
             printf "%-30s %-20s %-20s %-15s\n", $1, $2, $5, $4
         }'
 
-        # 清理临时文件
         rm -f "$temp_file"
        )
        return $?

@@ -23,9 +23,7 @@ export LANG="${_s_locale:-C.UTF-8}"
 export LC_ALL="${_s_locale:-C.UTF-8}"
 unset _s_locale _l
 
-# 默认主页
 menuname='主页'
-# 日期时间
 datevar=$(date +"%Y-%m-%d %H:%M:%S")
 # 颜色定义
 _red() {
@@ -55,14 +53,14 @@ dwidth() {
     echo "$len"
 }
 
-#logo
+# logo
 slogo() {
     _green '# 交互式shell脚本工具'
     _green '# Author:SSHPC <https://github.com/sshpc>'
     echo
 }
 
-#回首页
+# 回首页
 backtomain(){
     echo
     _red '输入有误  回车返回首页'
@@ -79,7 +77,7 @@ loadingprogressbar() {
     local spinstr='|/-\'
     local spinindex=0
     
-    tput civis # 隐藏光标
+    tput civis
     
     while :; do
         completed=0
@@ -90,11 +88,10 @@ loadingprogressbar() {
         done
         
         local percent=$((completed * 100 / total))
-        local bar_length=$((percent / 2)) # 50格进度条
+        local bar_length=$((percent / 2))
         local bar=$(printf '%-*s' "$bar_length" '' | tr ' ' '=')
         local empty=$(printf '%-*s' "$((50-bar_length))" '' | tr ' ' '.')
         
-        # 取旋转字符
         local spinchar="${spinstr:$spinindex:1}"
         spinindex=$(( (spinindex + 1) % 4 ))
         printf "\r\033[0;31;36mloading[%c] [%-50s] %3d%% (%d/%d)\033[0m" "$spinchar" "$bar$empty" "$percent" "$completed" "$total"
@@ -106,7 +103,7 @@ loadingprogressbar() {
         sleep "$delay"
     done
     
-    tput cnorm # 恢复光标
+    tput cnorm
     printf "\n"
 }
 
@@ -116,7 +113,7 @@ waitinput() {
     read -n1 -r -p "按任意键继续...(退出 Ctrl+C)"
 }
 
-#继续执行函数
+# 继续执行函数
 nextrun() {
     waitinput
     if [ -z "$(cat $installdir/config/lastfun)" ]; then
@@ -132,7 +129,7 @@ loading() {
     local pids=("$@")
     local delay=0.1
     local spinstr='|/-\'
-    tput civis # 隐藏光标
+    tput civis
     
     while :; do
         local all_done=true
@@ -148,11 +145,11 @@ loading() {
         [[ $all_done == true ]] && break
     done
     
-    tput cnorm        # 恢复光标
-    printf "\r\033[K" # 清除行
+    tput cnorm
+    printf "\r\033[K"
 }
 
-#检测命令是否存在
+# 检测命令是否存在
 _exists() {
     local cmd="$1"
     which $cmd >/dev/null 2>&1
@@ -160,17 +157,17 @@ _exists() {
     return ${rt}
 }
 
-#s日志读写
+# s日志读写
 slog() {
-    local method=$1 #set or get
+    local method=$1
     local file=$2
     local info=$3
     
     case $method in
-        set) #写入#
+        set)
             echo $info >>${installdir}/log/$file.log
         ;;
-        get) #读取#
+        get)
             tail -20 ${installdir}/log/$file.log
             
         ;;
@@ -182,10 +179,9 @@ slog() {
     
 }
 
-#通用安装函数
+# 通用安装函数
 check_and_install() {
     
-    # 检测包管理器
      if command -v apt &>/dev/null; then
         PKG_MGR="apt"
         INSTALL_CMD="apt install -y"
@@ -209,10 +205,8 @@ check_and_install() {
         return 1
     fi
 
-     # 逐个检查并安装
     for cmd in "$@"; do
 
-        # 检查命令是否已存在
         if command -v "$cmd" &>/dev/null; then
             continue
         fi
@@ -227,7 +221,6 @@ check_and_install() {
 }
 
 
-# 下载进度
 
 _DL_TIMEOUT="${_DL_TIMEOUT:-4}"
 _DL_ROUNDS="${_DL_ROUNDS:-2}"
@@ -374,7 +367,7 @@ _dl_line_to() {
     fi
     src="${source:0:12}"
     (( round > 1 )) && src="r${round}:${src}"
-    src="${src:0:12}"          # 重试前缀也算进宽度，避免行尾折行
+    src="${src:0:12}"
     [[ -z "$name" || "$name" == '?' ]] && name='(待开始)'
 
     printf -v plain '%s %-20.20s [%s] %3s%% %6s/%-6s %s' \
@@ -460,15 +453,15 @@ _dl_watch() {
                 _dl_line_to ln "${sfs[$i]}" "$ch" "$barw" "$linew"
                 if [[ "${prev[$i]:-}" != "$ln" ]]; then
                     prev[$i]="$ln"
-                    frame+="$ln"        # 只有变化的行才重写像素
+                    frame+="$ln"
                 fi
                 (( i < n - 1 )) && frame+=$'\n'
             done
-            printf '%s' "$frame"        # 一次 write，整帧同时上屏
+            printf '%s' "$frame"
             drawn=$n
         fi
 
-        if _dl_aborted; then            # 脚本在退出：马上收尾，别继续画
+        if _dl_aborted; then
             break
         fi
         (( ndone >= n )) && break
@@ -476,7 +469,7 @@ _dl_watch() {
         sleep 0.2
     done
 
-    if _dl_aborted; then              # 退出路径：只把光标交还，不重绘残行
+    if _dl_aborted; then
         if (( tty )); then
             _DL_COLOR=0
             printf '\033[?25h'
@@ -485,7 +478,7 @@ _dl_watch() {
     fi
 
     if (( tty )); then
-        frame=''                      # 收尾补一帧，确保最末屏是终态
+        frame=''
         (( drawn > 0 && n > 1 )) && frame+=$'\033['"$(( n - 1 ))"'A'
         for (( i = 0; i < n; i++ )); do
             frame+=$'\r'
@@ -496,9 +489,9 @@ _dl_watch() {
             fi
             (( i < n - 1 )) && frame+=$'\n'
         done
-        frame+=$'\n'                  # 收尾这一次换行，把光标交给块下方
+        frame+=$'\n'
         _DL_COLOR=0
-        printf '%s\033[?25h' "$frame"  # 恢复光标
+        printf '%s\033[?25h' "$frame"
     fi
     return 0
 }
@@ -525,7 +518,7 @@ _dl_fetch() {
     pid=$!
     _DL_WGET_PID=$pid
     while kill -0 "$pid" 2>/dev/null; do
-        if _dl_aborted || [[ ! -d "${sf%/*}" ]]; then   # 脚本在退出：别留后台进程
+        if _dl_aborted || [[ ! -d "${sf%/*}" ]]; then
             kill -9 "$pid" 2>/dev/null
             wait "$pid" 2>/dev/null
             _DL_WGET_PID=''
@@ -561,7 +554,7 @@ _dl_job() {
 
     for (( round = 1; round <= _DL_ROUNDS; round++ )); do
         for base in "${bases[@]}"; do
-            _dl_aborted && return 1      # 脚本在退出：别再试下一个源
+            _dl_aborted && return 1
             source=$(_dl_host "$base")
             url="${base}/sshpc/s/main/${filename}"
             total=$(_dl_remote_size "$url")
@@ -581,8 +574,8 @@ _dl_job() {
 
 # 下载单个文件（串行，自己一行进度）
 download_file() {
-    local filename="$1"   # 要下载的文件名（带路径，如 module/status.sh）
-    local output="$2"     # 输出路径（完整路径，不只是目录）
+    local filename="$1"
+    local output="$2"
     [[ -n "$filename" && -n "$output" ]] || return 1
 
     local dir="${installdir}/tmp/dldash"
@@ -601,7 +594,7 @@ download_file() {
 
     wait "$pid" 2>/dev/null
     local rc=$?
-    if (( ! _DL_DREW )) && [[ -z "$_DL_NOPROGRESS" ]] && ! _dl_aborted; then  # 没有原地看板：补一行最终结果
+    if (( ! _DL_DREW )) && [[ -z "$_DL_NOPROGRESS" ]] && ! _dl_aborted; then
         _dl_line "$sf" '-' 20
         printf '\n'
     fi
@@ -618,7 +611,7 @@ download_batch() {
     local dir="${installdir}/tmp/dldash"
     rm -rf "$dir" 2>/dev/null
     mkdir -p "$dir" 2>/dev/null
-    dir="${dir}/b$$.${RANDOM}"      # 每次调用独立，避免并发批次互删状态
+    dir="${dir}/b$$.${RANDOM}"
     mkdir -p "$dir" 2>/dev/null
 
     local -a sfs=() pids=()
@@ -645,7 +638,7 @@ download_batch() {
         [[ "$state" == "ok" ]] || rc=1
     done
 
-    if (( ! _DL_DREW )) && ! _dl_aborted; then   # 非 TTY / 无看板：逐行打印结果
+    if (( ! _DL_DREW )) && ! _dl_aborted; then
         for (( i = 0; i < n; i++ )); do
             _dl_line "${sfs[$i]}" '-' 20
             printf '\n'
@@ -656,21 +649,20 @@ download_batch() {
     return $rc
 }
 
-# 兼容旧调用：后台下载（调用方自己 pids+=($!)）
+# 后台下载（调用方自己 pids+=($!)）
 download_file_bg() {
     local filename="$1"
     local output="${2:-$installdir/$filename}"
     download_file "$filename" "$output" &
 }
 
-#解析ini
+# 解析ini
 get_ini_value() {
     local section="$1"
     local key="$2"
     local file="$3"
     
     
-    # 使用sed先处理文件：移除Windows换行符^M，再用awk解析
     result=$(sed 's/\r$//' "$file" | awk -v target_section="$section" -v target_key="$key" '
         BEGIN {
             in_target = 0
@@ -738,10 +730,8 @@ modules_list() {
     echo
     _blue "全部模块："
     while read -r m; do
-        # 清除回车符、换行符等控制字符
         m=$(echo "$m" | tr -d '\r\n\t')
         [[ -z "$m" ]] && continue
-        #echo $m
         local func=$(get_ini_value "$m" "name" "$conf")
         local desc=$(get_ini_value "$m" "desc" "$conf")
         local req=$(get_ini_value "$m" "required" "$conf")
@@ -790,7 +780,6 @@ modules_install() {
     
     local to_download=()
     
-    # 筛选需要下载的模块
     case "$choice" in
         n)
             _blue "仅安装 required 模块"
@@ -813,7 +802,6 @@ modules_install() {
     esac
 
     
-    # 并发下载处理（每个模块一行实时进度）
     if [[ ${#to_download[@]} -gt 0 ]]; then
         local -a files=()
         for m in "${to_download[@]}"; do
@@ -857,7 +845,6 @@ module_manager() {
     menu "${options[@]}"
 }
 
-# ==================== 版本管理 ====================
 
 # 备份当前版本到 bak 目录
 backup_current_version() {
@@ -987,7 +974,6 @@ cleanup_old_backups() {
         return
     fi
     
-    # 按修改时间排序，删除最旧的
     local to_remove=$((count - keep))
     local sorted=($(ls -dt "$bakroot"/*/ 2>/dev/null))
     for ((i = count - 1; i >= count - to_remove; i--)); do
@@ -1003,7 +989,7 @@ version_manager() {
     menu "${options[@]}"
 }
 
-# ==================== 菜单渲染 ====================
+# 菜单渲染
 
 staticmenu() {
     if [ $is_param_mode -eq 1 ]; then
@@ -1194,7 +1180,7 @@ menu() {
     esac
 }
 
-#重启脚本
+# 重启脚本
 selfrestart(){
     echo
     _green '保持配置..'
@@ -1205,10 +1191,10 @@ selfrestart(){
     exec s
 }
 
-#脚本设置
+# 脚本设置
 selfsetting(){
     
-    #移除脚本
+    # 移除脚本
     removeself() {
         [[ -n "${installdir:-}" && -d "$installdir" ]] || { _red "安装目录无效，已中止"; return 1; }
         rm -rf -- "${installdir:?}/core"/* 2>/dev/null
@@ -1218,7 +1204,7 @@ selfsetting(){
         rm -rf -- "${installdir:?}/modules.conf"
     }
     
-    #卸载脚本
+    # 卸载脚本
     uninstallfun() {
         read -ep "确认卸载 (y/n, 默认n): " delself
         if [[ "$delself" != "y" ]]; then
@@ -1296,7 +1282,6 @@ selfsetting(){
             return 1
         fi
 
-        # 三道闸：非空 / 语法 / 版本号格式
         _blue "校验下载内容..."
         local f
         local files=("$stage/s.sh")
@@ -1340,7 +1325,6 @@ selfsetting(){
             mv -f "$f" "$installdir/module/"
         done
 
-        # 清理新版本已移除的模块
         local keep m2 fname
         for f in "$installdir/module"/*.sh; do
             [[ -f "$f" ]] || continue
@@ -1396,14 +1380,14 @@ selfsetting(){
     menu "${options[@]}"
 }
 
-#菜单顶部内容
+# 菜单顶部内容
 beforeMenu(){
     _blue "> ---  当前目录: [ $(pwd) ] ---- < v:$selfversion [$menustyle]"
     echo
     _yellow "当前菜单: $menuname "
     echo
 }
-#主函数
+# 主函数
 main() {
     menuname='首页'
     echo "main" >$installdir/config/lastfun
@@ -1439,7 +1423,7 @@ main() {
     menu "${options[@]}"
 }
 
-#脚本初始化
+# 脚本初始化
 selfinitfun(){
     if [ ! -d "$installdir" ]; then
         slogo
@@ -1453,14 +1437,12 @@ selfinitfun(){
     
     mkdir -p "$installdir/bak"
     
-    #读取菜单样式
     if [[ -f "$installdir/config/menustyle" ]] && grep -q '^staticmenu$' "$installdir/config/menustyle"; then
         menustyle='staticmenu'
     else
         menustyle='menu'
     fi
     
-    # 初始化下载地址列表
     local original_url="http://raw.githubusercontent.com"
     proxylinks=("$original_url")
     for host in "${proxyhost[@]}"; do
@@ -1471,13 +1453,11 @@ selfinitfun(){
 # 加载文件
 loadfilefun() {
     
-    # 核心文件
     shfiles=(
         'version'
         'modules.conf'
     )
     
-    # 并行下载缺失文件（每个文件一行实时进度）
     local -a missing=()
     for shfile in "${shfiles[@]}"; do
         [[ -s "$installdir/$shfile" ]] || missing+=("$shfile")
@@ -1490,22 +1470,20 @@ loadfilefun() {
         wait
     fi
     
-    # 如果是首次安装（module 目录为空或没有模块），让用户选择全部安装或仅默认安装
     if [[ -z "$(ls -A $installdir/module 2>/dev/null)" ]] && [[ -s "$installdir/modules.conf" ]]; then
         echo
         modules_install
     fi
     
-    # 加载 modules 目录下所有模块脚本（存在的才加载）
     for mfile in "$installdir/module"/*.sh; do
         [[ -f "$mfile" ]] && source "$mfile"
     done
 }
 
-#终止和日志函数
+# 终止和日志函数
 exceptionfun(){
     _exit() {
-        printf '\033[?25h' 2>/dev/null   # 中断时别把光标留在隐藏状态
+        printf '\033[?25h' 2>/dev/null
         [[ -n "$_DL_ABORT_FILE" ]] && : > "$_DL_ABORT_FILE" 2>/dev/null
         if [ -e "./speedtest-cli/speedtest" ]; then
             rm -rf ./speedtest-cli
@@ -1567,7 +1545,6 @@ selfversionfun() {
     
     getlatestversion() {
         (
-            # 后台静默探测版本：不能往菜单上画进度条
             _DL_NOPROGRESS=1
             local tmpfile="$latestversion_file.tmp"
             if download_file "version" "$tmpfile"; then
@@ -1587,7 +1564,7 @@ selfversionfun() {
     latestversion=$(cat "$latestversion_file" 2>/dev/null)
 }
 
-#脚本运行
+# 脚本运行
 selfrun(){
     
     is_param_mode=0

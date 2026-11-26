@@ -1,7 +1,5 @@
 dockerfun() {
 
-    # ===================== compose 兼容层 =====================
-    # 优先 v2 插件(docker compose)，其次 v1 独立二进制(docker-compose)
     if [[ -z "${__DC_CMD+x}" ]]; then
         if docker compose version >/dev/null 2>&1; then
             __DC_CMD=(docker compose)
@@ -21,9 +19,7 @@ dockerfun() {
         fi
         "${__DC_CMD[@]}" "$@"
     }
-    # ==========================================================
 
-    # 命名卷软链接目录，可用 VOLUME_LINK_DIR 环境变量覆盖
     local _volume_link_dir="${VOLUME_LINK_DIR:-/home/docker/volume}"
 
     beforeMenu(){
@@ -33,7 +29,7 @@ dockerfun() {
     echo
     }
 
-    # 兼容 v1 / v2 的 compose 文件名；返回 0 表示存在，1 表示不存在
+    # 兼容 v1 / v2 的 compose 文件名
     has_compose_file() {
         [ -f "docker-compose.yml" ] || [ -f "docker-compose.yaml" ] \
         || [ -f "compose.yml" ] || [ -f "compose.yaml" ]
@@ -50,7 +46,6 @@ dockerfun() {
     catruncontainer() {
         echo
         local -a containers
-        # 参数判断：直接分支调用，避免拼命令串再 eval
         if [[ "$1" == "-all" ]]; then
             _green "当前所有容器："
             mapfile -t containers < <(docker ps -a --format '{{.Names}}\t{{.ID}}\t{{.Status}}')
@@ -87,11 +82,9 @@ dockerfun() {
         _blue "镜像列表："
         echo -e "\033[36m序号\t镜像名称\t\t\t镜像ID\t\t大小\t\t状态\033[0m"
 
-        # 获取正在使用的镜像列表
         local -a used_images=()
         mapfile -t used_images < <(docker ps --format '{{.Image}}' | sort -u)
         local i=1 name id size used status
-        # 排除悬空镜像，保证序号与“单个导出”里的列表一致
         while IFS='|' read -r name id size; do
             status=""
             for used in "${used_images[@]}"; do
@@ -107,7 +100,6 @@ dockerfun() {
 
     dockerstatusfun() {
         echo
-        # 统计信息
         RUNNING_CONTAINERS=$(docker ps -q | wc -l)
         TOTAL_CONTAINERS=$(docker ps -aq | wc -l)
         NETWORKS=$(docker network ls -q | wc -l)
@@ -154,14 +146,11 @@ dockerfun() {
         echo
         read -p "请输入容器序号（从 1 开始）： " index
 
-        # 获取容器的 ID 列表
         container_ids=($(docker ps -q))
 
-        # 检查输入的序号是否有效
         if [[ "$index" =~ ^[0-9]+$ ]] && (( index > 0 && index <= ${#container_ids[@]} )); then
             container_id=${container_ids[$((index - 1))]}
 
-            # 优先 bash，alpine 等镜像回退 sh
             if docker exec "$container_id" /bin/bash -c 'true' >/dev/null 2>&1; then
                 docker exec -it "$container_id" /bin/bash
             else
@@ -176,7 +165,6 @@ dockerfun() {
 
     dockerimagesrm() {
 
-        # 列出将要删除的悬空镜像
         unused_images=$(docker images -f "dangling=true" -q)
         if [ -n "$unused_images" ]; then
             _blue "将要删除的悬空镜像ID："
@@ -185,11 +173,9 @@ dockerfun() {
             _green "没有悬空镜像"
         fi
 
-        # 列出将要删除的未被使用的镜像
         _blue "将要删除的未被使用的镜像："
         docker images --filter "dangling=false" --format "{{.Repository}}:{{.Tag}}\t{{.ID}}" | while read -r line; do
             image_id=$(echo "$line" | awk '{print $2}')
-            # 检查是否被容器使用
             if ! docker ps -a --format '{{.Image}}' | grep -qw "$(echo "$line" | awk '{print $1}')"; then
                 echo "$line"
             fi
@@ -205,7 +191,6 @@ dockerfun() {
             docker rmi $unused_images && _green "已删除所有悬空镜像"
         fi
 
-        # 删除所有未被使用的镜像
         _blue "正在删除所有未被使用的镜像..."
         docker image prune -a -f
         loading $!
@@ -234,17 +219,13 @@ dockerfun() {
 
         catruncontainer
 
-        # 提示用户输入要重启的容器序号
         read -p "请输入要重启的容器序号（从 1 开始）： " index
 
-        # 获取容器的 ID 列表
         container_ids=($(docker ps -q))
 
-        # 检查输入的序号是否有效
         if [[ "$index" =~ ^[0-9]+$ ]] && (( index > 0 && index <= ${#container_ids[@]} )); then
             container_id=${container_ids[$((index - 1))]}
 
-            # 重启容器
             _blue "正在重启容器：$index"
             docker restart "$container_id" &
             loading $!
@@ -268,17 +249,13 @@ dockerfun() {
 
         catruncontainer -stop
 
-        # 提示用户输入要启动的容器序号
         read -p "请输入要启动的容器序号（从 1 开始）： " index
 
-        # 获取已停止容器的 ID 列表
         container_ids=($(docker ps -a -q -f status=exited))
 
-        # 检查输入的序号是否有效
         if [[ "$index" =~ ^[0-9]+$ ]] && (( index > 0 && index <= ${#container_ids[@]} )); then
             container_id=${container_ids[$((index - 1))]}
 
-            # 启动容器
             _blue "正在启动容器：$index"
             docker start "$container_id" &
             loading $!
@@ -293,17 +270,13 @@ dockerfun() {
 
         catruncontainer
 
-        # 提示用户输入要停止的容器序号
         read -p "请输入要停止的容器序号（从 1 开始）： " index
 
-        # 获取容器的 ID 列表
         container_ids=($(docker ps -q))
 
-        # 检查输入的序号是否有效
         if [[ "$index" =~ ^[0-9]+$ ]] && (( index > 0 && index <= ${#container_ids[@]} )); then
             container_id=${container_ids[$((index - 1))]}
 
-            # 停止容器
             _blue "正在停止容器：$index"
             docker stop "$container_id" &
             loading $!
@@ -318,17 +291,13 @@ dockerfun() {
         catruncontainer
         _red "注意！这将会使用 docker kill container"
 
-        # 提示用户输入要停止的容器序号
         read -p "请输入要强行停止的容器序号（从 1 开始）： " index
 
-        # 获取容器的 ID 列表
         container_ids=($(docker ps -q))
 
-        # 检查输入的序号是否有效
         if [[ "$index" =~ ^[0-9]+$ ]] && (( index > 0 && index <= ${#container_ids[@]} )); then
             container_id=${container_ids[$((index - 1))]}
 
-            # 停止容器
             _blue "正在停止容器：$index"
             docker kill "$container_id" &
             loading $!
@@ -351,7 +320,6 @@ dockerfun() {
             _blue "创建命名卷软连接 $_volume_link_dir（仅本项目使用的卷）"
             mkdir -p "$_volume_link_dir"
 
-            # 只处理本项目容器实际挂载的命名卷
             local -a project_vols=()
             mapfile -t project_vols < <(
                 for cid in $(dc ps -q); do
@@ -429,7 +397,6 @@ dockerfun() {
         mapfile -t net_ids < <(docker network ls -q)
         local network name scope driver gateway ipv4 internal
         for network in "${net_ids[@]}"; do
-            # 每个网络只 inspect 一次、jq 一次，输出用制表符分隔的字段
             IFS=$'\t' read -r name scope driver gateway ipv4 internal < <(
                 docker network inspect "$network" 2>/dev/null | jq -r \
                     '.[0] | [.Name, .Scope, .Driver,
@@ -450,13 +417,10 @@ dockerfun() {
     catcontainerlogs(){
         catruncontainer
 
-        # 提示用户输入要停止的容器序号
         read -p "请输入容器序号（从 1 开始）： " index
 
-        # 获取容器的 ID 列表
         container_ids=($(docker ps -q))
 
-        # 检查输入的序号是否有效
         if [[ "$index" =~ ^[0-9]+$ ]] && (( index > 0 && index <= ${#container_ids[@]} )); then
             container_id=${container_ids[$((index - 1))]}
 
@@ -471,13 +435,10 @@ dockerfun() {
     catrealtimecontainerlogs(){
         catruncontainer
 
-        # 提示用户输入要停止的容器序号
         read -p "请输入容器序号（从 1 开始）： " index
 
-        # 获取容器的 ID 列表
         container_ids=($(docker ps -q))
 
-        # 检查输入的序号是否有效
         if [[ "$index" =~ ^[0-9]+$ ]] && (( index > 0 && index <= ${#container_ids[@]} )); then
             container_id=${container_ids[$((index - 1))]}
 
@@ -491,7 +452,6 @@ dockerfun() {
 
     dockerimageimportexport() {
 
-        # 镜像导入导出根目录，可用 IMG_EXPORT_DIR 环境变量覆盖
         local _img_dir="${IMG_EXPORT_DIR:-/home/img}"
         if [ ! -d "$_img_dir" ]; then
             mkdir -p "$_img_dir"
@@ -503,7 +463,6 @@ dockerfun() {
             echo
             read -p "请输入要导出的镜像序号（从 1 开始）: " index
 
-            # 重新获取镜像名列表（排除悬空镜像，与 catdockerimg 的序号保持一致）
             mapfile -t images < <(docker images -f "dangling=false" --format "{{.Repository}}:{{.Tag}}")
 
 
@@ -556,8 +515,8 @@ dockerfun() {
                 _yellow "没有可导出的镜像"
                 return
             fi
-            loadingprogressbar "${pids[@]}" # 显示加载动画
-            wait                 # 等待所有子进程完成
+            loadingprogressbar "${pids[@]}"
+            wait
             _green "导出成功"
             ls "$_img_dir"
         }
@@ -571,7 +530,6 @@ dockerfun() {
             _blue "开始导入 $_img_dir 目录中的镜像文件..."
             for file in "$_img_dir"/*.tar; do
                 [ -e "$file" ] || { _red "没有找到任何 .tar 镜像文件"; return; }
-                # 获取镜像名（无标签镜像的 RepoTags 为 null，需过滤）
                 image_name=$(tar -tf "$file" | grep manifest.json | xargs -I{} tar -xOf "$file" {} | jq -r '.[0].RepoTags[0] // empty')
                 if [ -n "$image_name" ] && docker images | grep -q "$image_name"; then
                     _red "已存在同名镜像 $image_name"
@@ -613,12 +571,10 @@ dockerfun() {
 
         echo
         _blue "Docker情况"
-        # 检查 Docker 是否通过 snap 安装
         if command -v snap &> /dev/null && ( snap list | grep -q "docker" ) >/dev/null 2>&1; then
             echo "检测到 Docker 通过 snap 安装"
             SNAP_DAEMON_CONFIG="var/snap/docker/current/config/daemon.json"
 
-            # 检查 snap 配置文件
             if [ -f "$SNAP_DAEMON_CONFIG" ]; then
                 echo "snap Docker 配置文件: $SNAP_DAEMON_CONFIG"
             else
@@ -628,14 +584,12 @@ dockerfun() {
             echo "检测到 Docker 通过常规方式安装"
         fi
 
-        # 检查系统默认配置文件
         DEFAULT_CONFIG="/etc/docker/daemon.json"
         if [ -f "$DEFAULT_CONFIG" ]; then
             echo "配置文件: $DEFAULT_CONFIG"
         else
             echo "系统默认 Docker 配置文件不存在: $DEFAULT_CONFIG"
         fi
-        # 检查当前生效的镜像代理
         echo "当前生效的镜像代理配置:"
         docker info 2>/dev/null | grep -A1 -i "registry mirrors" || echo "未配置镜像代理"
 
@@ -774,7 +728,7 @@ dockerfun() {
         menu "${options[@]}"
     }
 
-    #其他
+    # 其他
     othercommands() {
 
         menuname='首页/docker/其他'

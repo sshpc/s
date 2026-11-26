@@ -7,7 +7,7 @@ ordertoolsfun() {
     }
 
     
-    #安装git便捷提交
+    # 安装git便捷提交
     igitcommiteasy() {
         check_and_install git
         if  _exists 'sgit'; then
@@ -41,15 +41,15 @@ ordertoolsfun() {
     }
     
 
-    #杀死vscode进程
+    # 杀死vscode进程
     killvscode() {
 
-        #仅杀掉占用最大的进程
+        # 仅杀掉占用最大的进程
         killtopvscode() {
             ps -uxa | grep '\.vscode-server' | sort -k3 -nr | head -n 1 | awk '{print $2}' | xargs kill -9
         }
 
-        #杀死所有vscode进程
+        # 杀死所有vscode进程
         killallvscode() {
             ps uxa | grep .vscode-server | awk '{print $2}' | xargs kill -9
         }
@@ -59,7 +59,7 @@ ordertoolsfun() {
         menu "${options[@]}"
     }
 
-    #清理 VS Code Server 目录
+    # 清理 VS Code Server 目录
     clearvscodefun() {
         echo
         _blue "=== 清理 VS Code Server 目录 (.vscode-server) ==="
@@ -78,7 +78,6 @@ ordertoolsfun() {
         local total_freed=0
         local count=0
 
-        # 清理 root 目录
         if [[ -d /root/.vscode-server ]]; then
             local sz=$(du -sb /root/.vscode-server 2>/dev/null | awk '{print $1}')
             rm -rf /root/.vscode-server
@@ -87,7 +86,6 @@ ordertoolsfun() {
             _green "[已清理] /root/.vscode-server"
         fi
 
-        # 清理所有普通用户目录
         for home in /home/*/; do
             local user_dir="${home%.vscode-server}"
             user_dir="${user_dir#/home/}"

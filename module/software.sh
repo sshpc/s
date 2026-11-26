@@ -6,9 +6,7 @@ softwarefun() {
         echo
     }
     
-    #下载并执行sh #参数 例: 'vaxilu/x-ui/master/install.sh'
-    # 同一个文件名（如 install.sh）会被多个第三方脚本复用，缓存必须按 URL 隔离，
-    # 否则先下载过的脚本会永远覆盖后续脚本的执行。
+    # 下载并执行sh
     runthirdscript() {
         local url="$1"
         local param="$2"
@@ -17,12 +15,10 @@ softwarefun() {
         local rawname
         rawname=$(basename "$url")
 
-        # 用 URL 的 sha1 前缀生成缓存子目录，保留原始文件名便于识别
         local cachekey
         if command -v sha1sum >/dev/null 2>&1; then
             cachekey=$(printf '%s' "$url" | sha1sum | awk '{print substr($1,1,12)}')
         else
-            # 兜底：去掉非字母数字字符（不保证唯一，但比共用文件名安全）
             cachekey=$(printf '%s' "$url" | tr -c '[:alnum:]' '_')
         fi
         local cachedir="$outputdir/$cachekey"
@@ -38,7 +34,6 @@ softwarefun() {
 
         local downloaded=0
         local -a urlparts=()
-        # 用数组保存完整 URL，避免 URL 中的空格被 wget 拆成多个参数
         read -r -a urlparts <<< "${url} ${param}"
         if (( ${#urlparts[@]} == 0 )); then
             _red "空 URL"
@@ -48,11 +43,9 @@ softwarefun() {
         for base in "${proxylinks[@]}"; do
             local fullurl="${base}/${urlparts[0]}"
             local tmppath="$filepath.part.$$"
-            # 实时展示本次尝试使用的地址前缀（proxylinks 里的加速 host + 原始前缀）
             _yellow "使用地址前缀: ${base}/"
             _blue "下载: $fullurl"
 
-            # 尽量探测远端大小，用于百分比进度条；探测不到则显示已接收字节数
             local total=0
             total=$(wget --spider -S --timeout="$timeout" --tries=1 -q "$fullurl" 2>&1 |
                 awk 'tolower($0) ~ /content-length:/ {v = $2} END {gsub(/\r/, "", v); print v + 0}')
@@ -61,7 +54,6 @@ softwarefun() {
             rm -f "$tmppath"
             wget -q --timeout="$timeout" --tries=1 -O "$tmppath" "$fullurl" >/dev/null 2>&1 &
             local wpid=$!
-            # 后台下载 + 轮询临时文件大小画进度条（TTY 下原地刷新）
             while kill -0 "$wpid" 2>/dev/null; do
                 local size=0
                 [[ -f "$tmppath" ]] && size=$(stat -c %s "$tmppath" 2>/dev/null)
@@ -111,16 +103,13 @@ softwarefun() {
             return 1
         fi
         chmod +x "$filepath"
-        # 透传全部参数：原来只传 $2，多参数场景（如 --abroad）会被截断
         bash "$filepath" "${urlparts[@]:1}"
     }
 
     
-    #更新所有已安装的软件包
+    # 更新所有已安装的软件包
     aptupdatefun() {
         dpkg --configure -a
-        # 原逻辑 pgrep -f "apt|apt-get" 会把自己、菜单脚本、编辑器里带 "apt" 字样的
-        # 进程一并 kill -9，误杀风险高；这里改为只提示，不自动强杀。
         local aptprocs
         aptprocs=$(pgrep -x apt-get 2>/dev/null; pgrep -x apt 2>/dev/null)
         if [[ -n "$aptprocs" ]]; then
@@ -144,8 +133,6 @@ softwarefun() {
         fi
         echo
         _blue "→ 是否升级所有已安装软件包（apt upgrade）？"
-        # 去掉 7 秒超时：超时会把空输入当成“不升级”，但用户往往没反应过来，
-        # 改成常规读取（Ctrl+C 可随时取消），默认回车仅跳过升级。
         local choice=""
         read -r -n 1 -p "输入 y 确认升级，不升级直接回车: " choice || choice=""
         echo
@@ -165,13 +152,11 @@ softwarefun() {
         _green "更新完成"
         next
     }
-    #修复更新
+    # 修复更新
     configureaptfun() {
         _red '注意：这将终止 apt/dpkg 进程并删除锁文件，请确保没有其他终端正在安装软件！'
         waitinput
         _blue '修复更新..'
-        # 原 pkill -9 -f 'apt|dpkg' 会匹配到任意命令行含 apt/dpkg 字样的进程
-        # （包括本脚本自身、编辑器、日志查看命令），改用精确进程名匹配。
         pkill -9 -x apt-get 2>/dev/null || true
         pkill -9 -x apt 2>/dev/null || true
         pkill -9 -x dpkg 2>/dev/null || true
@@ -183,13 +168,12 @@ softwarefun() {
         apt-get install -f -y
         apt-get update -y
         apt-get autoremove --purge -y
-        # 先 clean 再 autoclean：顺序反了会让 clean 无事可做
         apt-get clean -y
         apt-get autoclean -y
         _green '修复完成'
         next
     }
-    #安装常用包
+    # 安装常用包
     installcomso() {
         check_and_install wget curl jq net-tools vim openssh-server git zip htop gdu
         echo "所有包都已安装完成"
@@ -198,14 +182,11 @@ softwarefun() {
     smbdinstall(){
         _red '注意安装后默认会直接开放home目录匿名可读写访问'
         waitinput
-        # 检查是否已安装samba
         check_and_install samba 
         
-        # 备份原配置，文件名带日期时间，避免重复覆盖
         backup_time=$(date +"%Y%m%d_%H%M%S")
         cp /etc/samba/smb.conf /etc/samba/smb.conf.bak.$backup_time
         
-        # 添加/home匿名共享配置
         echo "" >> /etc/samba/smb.conf
         echo "[home]" >> /etc/samba/smb.conf
         echo "   path = /home" >> /etc/samba/smb.conf
@@ -215,14 +196,13 @@ softwarefun() {
         echo "   force user = root" >> /etc/samba/smb.conf
         echo "   force group = root" >> /etc/samba/smb.conf
         
-        # 重启samba服务
         systemctl restart smbd
         systemctl restart nmbd
         
         _blue "samba 安装并配置完成，/home 目录可匿名读写，权限为 root。"
     }
     
-    #换源
+    # 换源
     changemirrors() {
         cnmainland() {
             runthirdscript SuperManito/LinuxMirrors/main/ChangeMirrors.sh
@@ -243,8 +223,6 @@ softwarefun() {
         options=("大陆" cnmainland "海外" overseas "教育网" cnmainlandedu "getlinuxmirrors大陆" getlinuxmirrorsmain)
         menu "${options[@]}"
 
-        # datevar 含空格和冒号（如 "2026-11-25 01:56:00"），直接拼进文件名会产生
-        # 带空格/冒号的怪文件名；改用紧凑时间戳。
         if [ -f /etc/apt/sources.list.bak ]; then
             local baksuffix
             baksuffix=$(date +"%Y%m%d_%H%M%S")
@@ -254,7 +232,7 @@ softwarefun() {
     }
     
     removefun() {
-        #专项卸载
+        # 专项卸载
         removephp() {
             masterremove php
         }
@@ -282,7 +260,6 @@ softwarefun() {
             masterremove mysql-server
         }
         # 软件名校验：按 dpkg 包名规范限制字符集，杜绝通配符/路径/命令注入
-        # 注意：安全性主要来自后面的「精确包名匹配」，这里的字符校验是第二道闸
         _uninstall_name_valid() {
             local n="$1"
             [[ -n "$n" ]] || { _red "软件名不能为空"; return 1; }
@@ -295,7 +272,6 @@ softwarefun() {
             case "$n" in
                 */*|*..*) _red "软件名不能包含路径分隔符或 ..：$n"; return 1 ;;
             esac
-            # 阻止把系统级关键目录名当成软件名
             case "$n" in
                 etc|usr|var|lib|bin|sbin|boot|home|root|run|opt|tmp|sys|proc|dev|lib64|systemd)
                     _red "拒绝卸载系统关键目录名：$n"; return 1 ;;
@@ -318,14 +294,12 @@ softwarefun() {
                 return 1
             fi
 
-            # 1. 必须精确命中已安装包名；模糊匹配只做「提示」，绝不直接批量删
             local -a cand=()
             local pkg pkg_status
             pkg_status=$(dpkg-query -W -f='${Status}' -- "$resoftname" 2>/dev/null)
             if [[ "$pkg_status" == "install ok installed" ]]; then
                 cand+=("$resoftname")
             else
-                # 不是 apt 包（如 v2ray、手动编译安装的软件）：只清理固定路径白名单，不做模糊 find
                 if [[ -n "$pkg_status" ]]; then
                     _red "包 $resoftname 当前状态为「$pkg_status」，不是已安装状态"
                 else
@@ -367,7 +341,6 @@ softwarefun() {
                 return 0
             fi
 
-            # 2. 展示该包的关键属性
             _yellow "匹配到已安装包："
             local meta
             for pkg in "${cand[@]}"; do
@@ -376,7 +349,6 @@ softwarefun() {
             done
             echo
 
-            # 3. 关键保护：Essential / required / important 包必须二次确认
             local -a critical=()
             for pkg in "${cand[@]}"; do
                 meta=$(dpkg-query -W -f='${Essential} ${Priority}' -- "$pkg" 2>/dev/null)
@@ -405,7 +377,6 @@ softwarefun() {
                 systemctl stop "$pkg" 2>/dev/null
             done
 
-            # 4. 卸载前先记下这些包的 dpkg 文件清单（purge 后 dpkg -L 就读不到了）
             local -a owned=()
             local f
             for pkg in "${cand[@]}"; do
@@ -415,7 +386,6 @@ softwarefun() {
                 done < <(dpkg -L "$pkg" 2>/dev/null)
             done
 
-            # 5. 交给包管理器精确卸载，不再自己 rm 系统路径
             echo "执行 purge.."
             apt-get --purge remove -y -- "${cand[@]}"
             local purge_rc=$?
@@ -425,8 +395,6 @@ softwarefun() {
                 return $purge_rc
             fi
 
-            # 6. 仅清理「这些包原本拥有」且 purge 后仍留在磁盘上的文件
-            #    并且永远跳过系统关键路径（即使它出现在包清单里也不自己删）
             local -a uniq_left=()
             if (( ${#owned[@]} > 0 )); then
                 local -a sorted_owned=()
@@ -530,7 +498,7 @@ softwarefun() {
             echo
         }
 
-        #安装docker
+        # 安装docker
         softdocker_install() {
             _blue "开始安装 Docker ..."
             if command -v docker &>/dev/null; then
@@ -548,7 +516,7 @@ softwarefun() {
             fi
         }
 
-        #docker换源
+        # docker换源
         softdocker_mirror() {
             _blue "调用 linuxmirrors.cn 换源脚本 ..."
             if command -v curl &>/dev/null; then
@@ -569,7 +537,7 @@ softwarefun() {
             fi
         }
 
-        #docker修复
+        # docker修复
         softdocker_repair() {
             _blue "=== docker 修复 ==="
             if ! command -v docker &>/dev/null; then
@@ -613,8 +581,7 @@ softwarefun() {
             fi
         }
 
-        #---------------- docker 卸载公共步骤 ----------------
-        # 停止服务并杀掉残留进程
+        # docker 卸载公共步骤
         _dk_stop_services() {
             _blue "停止 docker 相关服务 ..."
             systemctl stop docker.socket 2>/dev/null || true
@@ -638,25 +605,21 @@ softwarefun() {
             ids=$(docker ps -aq 2>/dev/null)
             if [[ -n "$ids" ]]; then
                 _blue "删除全部容器 ..."
-                # shellcheck disable=SC2086
                 docker rm -f $ids >/dev/null 2>&1 || true
             fi
             ids=$(docker volume ls -q 2>/dev/null)
             if [[ -n "$ids" ]]; then
                 _blue "删除全部数据卷 ..."
-                # shellcheck disable=SC2086
                 docker volume rm -f $ids >/dev/null 2>&1 || true
             fi
             ids=$(docker network ls --format '{{.Name}}' 2>/dev/null | grep -vE '^(bridge|host|none)$')
             if [[ -n "$ids" ]]; then
                 _blue "删除自定义网络 ..."
-                # shellcheck disable=SC2086
                 docker network rm $ids >/dev/null 2>&1 || true
             fi
             ids=$(docker images -aq 2>/dev/null)
             if [[ -n "$ids" ]]; then
                 _blue "删除全部镜像 ..."
-                # shellcheck disable=SC2086
                 docker rmi -f $ids >/dev/null 2>&1 || true
             fi
         }
@@ -859,8 +822,6 @@ softwarefun() {
     
     installvasma() {
         runthirdscript mack-a/v2ray-agent/master/install.sh || return 1
-        # 原代码直接调用 vasma，但该命令由上游安装脚本在「安装完成」分支里创建，
-        # 若用户选择的是更新/管理等操作，本机可能根本没有 vasma 命令而报错退出。
         if command -v vasma >/dev/null 2>&1; then
             vasma
         else

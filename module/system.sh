@@ -6,12 +6,11 @@ systemfun() {
     echo
     }
 
-    #获取系统安装时间
+    # 获取系统安装时间
     get_system_install_time() {
         local install_time_raw=""
         local install_time="未知"
 
-        # 1. 尝试 /var/log/installer/ 或 /root/anaconda-ks.cfg
         if [[ -d /var/log/installer ]]; then
             install_time_raw=$(ls -ld /var/log/installer | awk '{print $6,$7,$8}')
             if [[ -n "$install_time_raw" ]]; then
@@ -26,7 +25,6 @@ systemfun() {
             fi
         fi
 
-        # 2. /lost+found 目录
         if [[ -d /lost+found ]]; then
             install_time_raw=$(stat -c '%w' /lost+found 2>/dev/null)
             if [[ "$install_time_raw" != "-" && -n "$install_time_raw" ]]; then
@@ -35,7 +33,6 @@ systemfun() {
             fi
         fi
 
-        # 3. tune2fs 查询根分区
         root_dev=$(df / | tail -1 | awk '{print $1}')
         if command -v tune2fs >/dev/null 2>&1; then
             install_time_raw=$(sudo tune2fs -l "$root_dev" 2>/dev/null | grep 'Filesystem created:' | head -1 | awk -F': ' '{print $2}')
@@ -45,14 +42,12 @@ systemfun() {
             fi
         fi
 
-        # 4. 根目录修改时间兜底
         install_time_raw=$(stat -c '%y' / 2>/dev/null)
         if [[ -n "$install_time_raw" ]]; then
             install_time=$(date -d "$install_time_raw" +%F 2>/dev/null)
             [[ -n "$install_time" ]] && echo "$install_time" && return 0
         fi
 
-        # 5. 如果所有方法都失败
         echo "未知"
     }
 
@@ -70,7 +65,6 @@ systemfun() {
             elif (( raw == 0 )); then
                 echo "0"; return
             fi
-            #awk -v r="$raw" -v n="$num" -v u="$unit" 'BEGIN{printf "%.1f %s", r/n, u}'
             total_size=$(awk 'BEGIN{printf "%.1f", '"$raw"' / '$num'}')
             echo "${total_size} ${unit}"
         }
@@ -115,7 +109,6 @@ systemfun() {
             esac
         }
 
-        # CPU信息
         cname=$(awk -F: '/model name/ {name=$2} END {gsub(/^[ \t]+|[ \t]+$/, "", name); print name}' /proc/cpuinfo)
         cores=$(awk '/^processor/ {core++} END {print core}' /proc/cpuinfo)
         freq=$(awk '/cpu MHz/ {print $4; exit}' /proc/cpuinfo)
@@ -123,7 +116,6 @@ systemfun() {
         cpu_aes=$(grep -i 'aes' /proc/cpuinfo)
         cpu_virt=$(grep -Ei 'vmx|svm' /proc/cpuinfo)
 
-        # 内存信息（精确匹配Mem/Swap行，拆分KB变量）
         free_out=$(free)
         totalram_kb=$(echo "$free_out" | awk '/^Mem:/ {print $2}')
         totalram=$(calc_size "$totalram_kb")
@@ -134,19 +126,15 @@ systemfun() {
         uswap_kb=$(echo "$free_out" | awk '/^Swap:/ {print $3}')
         uswap=$(calc_size "$uswap_kb")
 
-        # 系统运行时间
         up=$(awk '{a=$1/86400; b=($1%86400)/3600; c=($1%3600)/60} {printf "%d days, %d hour %d min\n", a, b, c}' /proc/uptime)
-        # 系统安装时间
         installtime=$(get_system_install_time)
 
-        # 系统基本信息
         opsy=$(get_opsy)
         arch=$(uname -m)
         power_mode=$(get_power_mode)
         lbit=$(command -v getconf &>/dev/null && getconf LONG_BIT || (echo "$arch" | grep -q "64" && echo 64 || echo 32))
         kern=$(uname -r)
 
-        # 磁盘信息（精确匹配df total行，容错zpool输出）
         df_total=$(df -t simfs -t ext2 -t ext3 -t ext4 -t btrfs -t xfs -t vfat -t ntfs --total 2>/dev/null | grep '^total')
         in_kernel_total_kb=$(echo "$df_total" | awk '{print $2}')
         in_kernel_used_kb=$(echo "$df_total" | awk '{print $3}')
@@ -155,7 +143,6 @@ systemfun() {
         disk_total=$(calc_size $((swap_total_kb + in_kernel_total_kb + zfs_total_kb)))
         disk_used=$(calc_size $((uswap_kb + in_kernel_used_kb + zfs_used_kb)))
 
-        # 网络与虚拟化
         tcpctrl=$(sysctl net.ipv4.tcp_congestion_control 2>/dev/null | awk '{print $3}')
         [[ -x "$(command -v dmesg)" ]] && virtualx=$(dmesg 2>/dev/null)
         if command -v dmidecode &>/dev/null; then
@@ -164,7 +151,6 @@ systemfun() {
             sys_ver=$(dmidecode -s system-version 2>/dev/null)
         fi
 
-        # 虚拟化检测
         if grep -qa docker /proc/1/cgroup; then
             virt="Docker"
         elif grep -qa lxc /proc/1/cgroup || grep -qa container=lxc /proc/1/environ; then
@@ -189,7 +175,6 @@ systemfun() {
             virt="Dedicated"
         fi
 
-        # 输出信息（确保所有变量带单位）
         echo
         echo " CPU Model          : $(_blue "${cname:-CPU model not detected}")"
         echo " CPU Cores          : $(_blue "${cores}${freq:+ @ $freq MHz}")"
@@ -209,26 +194,22 @@ systemfun() {
         [[ -n "$power_mode" ]] && echo " Power Mode         : $(_blue "$power_mode")"
     }
 
-    #同步时间
+    # 同步时间
     synchronization_time() {
                 echo "同步前的时间: $(date -R)"
         echo "同步为上海时间? (y/n)"
         read -r confirm
         if [[ "$confirm" =~ ^[Yy]$ ]]; then
-            # 先备份原时区文件
             if [ -f "/etc/localtime" ]; then
                 cp -a /etc/localtime /etc/localtime.bak."$(date +%Y%m%d%H%M%S)"
             fi
-            # 使用符号链接而非直接复制，避免文件系统问题
             ln -snf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime
             timedatectl set-timezone Asia/Shanghai
             timedatectl set-local-rtc 0
-            # 检查ntpd服务是否存在，不存在则安装
             check_and_install ntpd
             
             timedatectl set-ntp yes
             hwclock -w
-            # 检查服务是否存在再重启
             for service in rsyslog cron; do
                 if systemctl is-active --quiet "$service"; then
                     systemctl restart "$service"
@@ -240,7 +221,7 @@ systemfun() {
             echo "已取消时间同步"
         fi
     }
-    #配置仅秘钥rootssh登录
+    # 仅秘钥rootssh登录
     sshpubonly() {
         echo "备份原文件Back up the sshd_config"
         cp /etc/ssh/sshd_config /etc/ssh/sshd_config.bak."$datevar"
@@ -251,7 +232,7 @@ systemfun() {
         service sshd restart
         _blue "ok"
     }
-    #生成ssh密钥对
+    # 生成ssh密钥对
     sshgetpub() {
         _blue "默认使用 ed25519 加密算法"
         read -ep "请输入email 仅做注释(可选): " email
@@ -262,7 +243,7 @@ systemfun() {
         echo "公钥："
         cat ~/.ssh/id_ed25519.pub
     }
-    #往authorized_keys写入公钥
+    # 往authorized_keys写入公钥
     sshsetpub() {
         echo "请填入ssh公钥 (Write into /root/.ssh/authorized_keys)"
         read -ep "请粘贴至命令行回车(Please paste and enter): " sshpub
@@ -271,13 +252,13 @@ systemfun() {
         echo "ssh公钥写入成功Write success"
         echo
     }
-    #查看本机authorized_keys
+    # 查看本机authorized_keys
     catkeys() {
         cat /root/.ssh/authorized_keys
     }
     
     
-    #系统检查
+    # 系统检查
     systemcheck() {
         echo "正常登录到本机30天内的所有用户的历史记录:"
         last | head -n 30
@@ -433,9 +414,7 @@ systemfun() {
         if [[ -z "$keyword" ]]; then
             pids=$(ps -e -o pid=)
         else
-            # 进程匹配
             pids=$(ps -eo pid,cmd --no-headers | grep -i "$keyword" | grep -v "grep" | awk '{print $1}')
-            # 服务匹配
             svc_pids=$(systemctl list-units --type=service --all --no-legend 2>/dev/null | grep -i "$keyword" | awk '{print $1}' | \
                 while read svc; do
                     mainpid=$(systemctl show -p MainPID "$svc" 2>/dev/null | cut -d= -f2)
@@ -451,7 +430,6 @@ systemfun() {
             [[ -n "${seen_pids[$pid]}" ]] && continue
             seen_pids[$pid]=1
 
-            # 获取服务名（主进程）
             service_name=$(systemctl list-units --type=service --all --no-legend 2>/dev/null | \
                 awk '{print $1}' | while read svc; do
                     mainpid=$(systemctl show -p MainPID "$svc" 2>/dev/null | cut -d= -f2)
@@ -459,7 +437,6 @@ systemfun() {
                 done | head -n1)
             [[ -z "$service_name" ]] && service_name="非服务"
 
-            # 命令、执行文件、创建时间
             cmd=$(cat /proc/$pid/cmdline 2>/dev/null | tr '\0' ' ')
             [[ -z "$cmd" ]] && cmd="未知"
             exe_path=$(readlink -f "/proc/$pid/exe" 2>/dev/null)
@@ -467,14 +444,12 @@ systemfun() {
             ctime=$(stat -c "%y" "$exe_path" 2>/dev/null | cut -c1-7)
             [[ -z "$ctime" ]] && ctime="未知"
 
-            # 获取监听端口（TCP/UDP），匹配 PID
             ports=$(ss -tulnp 2>/dev/null | awk -v pid="$pid" '
                 $0 ~ pid {
                     split($5,a,":"); print a[length(a)]
                 }' | sort -u | tr '\n' ',' | sed 's/,$//')
             [[ -z "$ports" ]] && ports="无"
 
-            # 输出
             if [[ "$service_name" != "非服务" ]]; then
                 echo "服务名: $service_name"
                 echo "主进程 PID: $pid"
@@ -491,7 +466,7 @@ systemfun() {
 
 
     
-    #计划任务crontab
+    # 计划任务crontab
     crontabfun() {
         crontabview() {
             echo
@@ -820,14 +795,14 @@ systemfun() {
         menu "${options[@]}"
     }
 
-    #配置开机运行脚本 rc.local
+    # 开机运行脚本 rc.local
     rclocalfun() {
         _blue '添加类似  nohup ... >> xxx.log 2>&1 &  最后行加 exit 0 '
         waitinput
         vim /etc/rc.local
     }
 
-    # 配置自定义服务
+    # 自定义服务
     swapfun() {
         if [[ $EUID -ne 0 ]]; then
             _red "Error:This script must be run as root"
@@ -838,10 +813,8 @@ systemfun() {
             _green "请输入需要添加的swap,建议为内存的2倍"
             read -p "请输入swap数值:(纯数字 M)" swapsize
 
-            #检查是否存在swapfile
             grep -q "swapfile" /etc/fstab
 
-            #如果不存在将为其创建swap
             if [ $? -ne 0 ]; then
                 fallocate -l ${swapsize}M /swapfile
                 chmod 600 /swapfile
@@ -857,10 +830,8 @@ systemfun() {
         }
 
         del_swap() {
-            #检查是否存在swapfile
             grep -q "swapfile" /etc/fstab
 
-            #如果存在就将其移除
             if [ $? -eq 0 ]; then
                 _green "swapfile已发现，正在将其移除..."
                 sed -i '/swapfile/d' /etc/fstab
@@ -881,7 +852,6 @@ systemfun() {
 
     cleansyslogs() {
         
-        # 获取当前可用空间
         local before=$(df --output=avail / | tail -1)
 
         _blue "清理 systemd 日志..."
@@ -898,11 +868,9 @@ systemfun() {
         _blue "清理崩溃日志..."
         sudo rm -rf /var/crash/* 2>/dev/null
 
-        # 获取清理后可用空间
         local after=$(df --output=avail / | tail -1)
         local freed_kb=$((after - before))
 
-        # 计算节省空间（自动单位换算）
         local freed_human
         if (( freed_kb >= 1048576 )); then
             freed_human=$(awk "BEGIN {printf \"%.2f GB\", $freed_kb/1048576}")
@@ -917,28 +885,23 @@ systemfun() {
 
 
     updateservername(){
-        # 严格模式放进子 shell：函数返回时不会把 -euo pipefail 泄漏到全局 shell
         (
         set -euo pipefail
 
-        # 检查是否以root权限运行（修改主机名和hosts需要root）
         if [ "$(id -u)" -ne 0 ]; then
             echo "错误：请使用root权限运行（sudo ./change_hostname.sh）"
             exit 1
         fi
 
-        # 获取当前主机名
         current_hostname=$(hostnamectl --static)
         echo "当前主机名：$current_hostname"
         echo "-------------------------"
 
-        # 提示用户输入新主机名
         read -p "请输入新主机名（仅支持字母、数字、连字符'-'，不能以'-'开头/结尾，长度≤63）：" new_hostname
 
         # 验证主机名合法性（符合Linux主机名规范）
         validate_hostname() {
             local hostname="$1"
-            # 正则：仅包含字母、数字、连字符，不以连字符开头/结尾，长度≤63
             if [[ ! "$hostname" =~ ^[a-zA-Z0-9][a-zA-Z0-9-]{0,61}[a-zA-Z0-9]$ ]]; then
                 echo "错误：主机名格式无效！请重新输入。"
                 return 1
@@ -946,29 +909,22 @@ systemfun() {
             return 0
         }
 
-        # 循环验证，直到输入合法
         while ! validate_hostname "$new_hostname"; do
             read -p "请重新输入新主机名：" new_hostname
         done
 
-        # 备份原配置文件（防止修改出错）
         echo -e "\n正在备份配置文件..."
         cp -a /etc/hostname "/etc/hostname.bak-$(date +%Y%m%d%H%M)"
         cp -a /etc/hosts "/etc/hosts.bak-$(date +%Y%m%d%H%M)"
         echo "备份完成（路径：/etc/hostname.bak-* 和 /etc/hosts.bak-*）"
 
-        # 修改静态主机名（永久生效）
         echo -e "\n正在修改主机名..."
         hostnamectl set-hostname "$new_hostname"
 
-        # 更新/etc/hosts文件（替换旧主机名记录，避免本地解析问题）
         echo "正在更新/etc/hosts文件..."
-        # 替换127.0.1.1对应的旧主机名（这是Linux默认的本地主机名解析条目）
         sed -i "s/127.0.1.1.*/127.0.1.1\t$new_hostname/" /etc/hosts
-        # 替换其他可能包含旧主机名的条目（如localhost后的别名）
         sed -i "s/$current_hostname/$new_hostname/g" /etc/hosts
 
-        # 显示修改结果
         echo -e "\n-------------------------"
         echo "主机名修改完成！"
         echo "新主机名：$(hostnamectl --static)"

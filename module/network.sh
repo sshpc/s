@@ -8,30 +8,27 @@ networkfun() {
     }
     
 
-#获取网卡
+# 获取网卡
     getnetcard() {
-        # 获取系统中可用的网卡名称
         interfaces=$(ifconfig -a | sed -nE 's/^([^[:space:]]+).*$/\1/p')
 
-        # 输出供用户选择的网卡名称列表
         PS3="请选择网卡名称： "
         select interface in $interfaces; do
             if [[ -n "$interface" ]]; then
                 break
             fi
         done
-        # 去掉网卡名称后面的冒号，并输出用户选择的网卡名称
         interface=$(echo "$interface" | sed 's/://')
         echo $interface
     }
 
-    #实时网速
+    # 实时网速
     Realtimenetworkspeedfun() {
         check_and_install bmon
         bmon
     }
 
-    #网络信息
+    # 网络信息
     netinfo() {
         echo
         _blue "--本机IP--" 
@@ -82,7 +79,7 @@ networkfun() {
 
 
     
-    #ufw防火墙
+    # ufw防火墙
     ufwfun() {
         ufwopen() {
             check_and_install ufw
@@ -134,7 +131,7 @@ networkfun() {
 
         setufwfromip() {
 
-            # 函数：允许特定 IP 和端口的入站流量
+            # 允许特定 IP 和端口的入站流量
             allow_ip_port() {
 
                 read -ep "请输入ip: " ip
@@ -154,7 +151,7 @@ networkfun() {
 
             }
 
-            # 函数：拒绝特定 IP 和端口的入站流量
+            # 拒绝特定 IP 和端口的入站流量
             deny_ip_port() {
                 read -ep "请输入ip: " ip
                 read -ep "请输入端口号 (0-65535): " unport
@@ -185,7 +182,6 @@ networkfun() {
     }
 
     fail2banfun() {
-        # 仅在未安装时才安装
         if ! command -v fail2ban-client &>/dev/null; then
             check_and_install fail2ban
         fi
@@ -267,7 +263,6 @@ EOF
                     ;;
             esac
 
-            # 重启 fail2ban 服务
             if command -v systemctl &>/dev/null; then
                 systemctl restart fail2ban 2>/dev/null || systemctl start fail2ban 2>/dev/null || true
             else
@@ -324,7 +319,7 @@ EOF
         menu "${options[@]}"
     }
 
-    #iperf3打流
+    # iperf3打流
     iperftest() {
 
         check_and_install iperf3
@@ -355,7 +350,7 @@ EOF
             ;;
         esac
     }
-    #nmap扫描
+    # nmap扫描
     nmapfun() {
 
         check_and_install nmap
@@ -394,7 +389,7 @@ EOF
         esac
     }
     
-    #外网测速
+    # 外网测速
     publicnettest() {
 
         netfast() {
@@ -404,18 +399,18 @@ EOF
             echo "测速完成"
         }
 
-        #SpeedCLI 测速
+        # SpeedCLI 测速
         netfast2() {
             echo "开始测速"
             curl -fsSL git.io/speedtest-cli.sh | sudo bash
             speedtest
             echo "测速完成"
         }
-        #三网测速
+        # 三网测速
         sanwang() {
             bash <(curl -Lso- https://down.wangchao.info/sh/superspeed.sh)
         }
-        #多地区测速
+        # 多地区测速
         netfast3() {
 
             if [ ! -e "./speedtest-cli/speedtest" ]; then
@@ -494,11 +489,10 @@ EOF
         menu "${options[@]}"
 
     }
-    #配置局域网ip
+    # 局域网ip
     lanfun() {
 
         cidr2mask() {
-            # 参数: CIDR (如 24)，返回 netmask (如 255.255.255.0)
             local cidr=$1
             local mask=""
             local i
@@ -563,7 +557,6 @@ iface $ens inet static
     dns-nameservers $nameservers
 EOF
 
-            # 尝试重启网络服务
             if command -v systemctl &>/dev/null; then
                 systemctl restart networking || true
             fi
@@ -659,7 +652,6 @@ EOM
             echo "ok"
         }
 
-        # 根据系统选择实现
         if [[ -f /etc/os-release ]]; then
             . /etc/os-release
             ID_LC="${ID,,}"
@@ -681,13 +673,13 @@ EOM
 
     }
 
-    #配置临时代理
+    # 临时代理
     http_proxy() {
         _blue '配置后仅当前窗口生效,需手动执行'
         echo 'export http_proxy=http://x.x.x.x:x'
     }
 
-    #系统网络配置优化
+    # 系统网络配置优化
     system_best() {
         sed -i '/net.ipv4.tcp_retries2/d' /etc/sysctl.conf
         sed -i '/net.ipv4.tcp_slow_start_after_idle/d' /etc/sysctl.conf
@@ -742,18 +734,15 @@ net.ipv4.tcp_max_orphans = 32768
 
     portforward() {
         check_and_install socat
-        # 定义函数：启动端口转发
+        # 启动端口转发
         start_port_forward() {
 
-            # 获取监听端口和目标地址
             read -p "请输入监听端口: " listen_port
             read -p "请输入目标 IP:  " target_addr
             read -p "请输入目标端口: " target_port
 
-            # 服务名称
             service_name="port-forwarding-$listen_port"
 
-            # 创建 systemd 服务文件
             service_file="/etc/systemd/system/$service_name.service"
             cat <<EOF >$service_file
 [Unit]
@@ -771,21 +760,17 @@ StandardError=file:$HOME/$service_name.log
 WantedBy=multi-user.target
 EOF
 
-            # 重载 systemd 管理器配置
             systemctl daemon-reload
 
-            # 启动服务
             systemctl start $service_name
             _blue "服务 $service_name 已启动。"
 
-            # 启用服务，使其开机自启
             systemctl enable $service_name
             _green "服务 $service_name 已设置为开机自启。"
 
         }
-        # 定义函数：停止端口转发
+        # 停止端口转发
         stop_port_forward() {
-            # 获取所有以 port-forwarding 开头的服务
             services=($(systemctl list-units --full -all | grep 'port-forwarding' | awk '{print $1}'))
             if [ ${#services[@]} -eq 0 ]; then
                 _red "未找到任何 port-forwarding 相关的服务。"
@@ -815,12 +800,11 @@ EOF
                 _red "输入的编号无效，请重新运行该函数。"
             fi
         }
-        # 定义函数：检查端口转发状态
+        # 检查端口转发状态
         list_port_forward() {
             _blue "列出所有端口转发："
             pgrep -f "socat TCP-LISTEN:" | xargs -I {} ps -p {} -o pid,cmd
 
-            # 获取所有以 port-forwarding 开头的服务
             services=($(systemctl list-units --full -all | grep 'port-forwarding' | awk '{print $1}'))
             if [ ${#services[@]} -eq 0 ]; then
                 _red "未找到任何 port-forwarding 相关的服务。"
@@ -833,30 +817,24 @@ EOF
                 echo "$((i + 1)). ${services[$i]} - $status"
             done
         }
-        # 定义函数：主菜单
         menuname='首页/网络/端口转发服务'
         options=("开启转发" start_port_forward "终止转发" stop_port_forward "列出所有转发" list_port_forward)
 
         menu "${options[@]}"
     }
 
-    #测试端口延迟
+    # 测试端口延迟
     testport(){
-        # 提示用户输入 IP 地址和端口号
         read -p "请输入目标 IP 地址: " ip
         read -p "请输入目标端口号: " port
 
-        # 记录开始时间
         start_time=$(date +%s%N)
 
-        # 尝试连接到指定的 IP 和端口
         nc -z -w 2 $ip $port
         result=$?
 
-        # 记录结束时间
         end_time=$(date +%s%N)
 
-        # 计算延迟（毫秒）
         latency=$(( (end_time - start_time) / 1000000 ))
 
         if [ $result -eq 0 ]; then
@@ -867,7 +845,7 @@ EOF
 
     }
 
-    #切换TCP拥塞控制
+    # 切换TCP拥塞控制
     switchTCPctrl(){
         tcpcc=$(sysctl net.ipv4.tcp_congestion_control | awk -F ' ' '{print $3}')
 
